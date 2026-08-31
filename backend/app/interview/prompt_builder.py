@@ -1,17 +1,19 @@
 from typing import Optional
 from app.models.interview import InterviewConfig, InterviewRole, ExperienceLevel, InterviewLanguage, InterviewStage
 from app.interview.state_machine import InterviewStateMachine
+from app.interview.adaptive_engine import AdaptiveAction
 
 class InterviewPromptBuilder:
     """
-    Constructs dynamic, role-tailored and stage-conditioned system prompts for Voice AI interviews.
+    Constructs dynamic, role-tailored, stage-conditioned, and adaptively targeted system prompts for Voice AI interviews.
     """
     
     @staticmethod
     def build_system_prompt(
         config: InterviewConfig, 
         candidate_name: str = "Candidate",
-        stage: Optional[InterviewStage] = None
+        stage: Optional[InterviewStage] = None,
+        adaptive_action: Optional[AdaptiveAction] = None
     ) -> str:
         topics_str = ", ".join(config.topics)
         lang_instruction = (
@@ -33,12 +35,19 @@ TARGET JOB DESCRIPTION & REQUIREMENTS:
         sm = InterviewStateMachine(config=config, initial_stage=stage or InterviewStage.GREETING)
         stage_directive = sm.get_stage_directive(stage=stage)
 
+        # Adaptive engine directive
+        adaptive_directive = ""
+        if adaptive_action:
+            adaptive_directive = f"\n{adaptive_action.guidance_directive}\n"
+
         prompt = f"""You are VoiceHire, a senior staff technical interviewer conducting a live voice technical interview for a {config.role.value} position at the {config.experience_level.value} level.
 Candidate Name: {candidate_name}
 Target Duration: {config.duration_minutes} minutes
 Selected Evaluation Topics: {topics_str}
 
 {stage_directive}
+
+{adaptive_directive}
 
 {lang_instruction}
 

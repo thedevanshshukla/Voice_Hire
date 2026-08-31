@@ -55,6 +55,8 @@ class TranscriptEntry(BaseModel):
     stage: InterviewStage = InterviewStage.GREETING
     role: str # "candidate" or "interviewer"
     text: str
+    evaluated_depth: Optional[str] = Field(None, description="Evaluated depth of candidate response")
+    adaptive_strategy: Optional[str] = Field(None, description="Applied adaptive questioning strategy")
     timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     metrics: Optional[Dict[str, Any]] = None
     was_interrupted: bool = False
@@ -80,6 +82,7 @@ class InterviewSession(BaseModel):
         "candidate_questions": 0,
         "wrap_up": 0
     })
+    topic_coverage: Dict[str, Dict[str, Any]] = Field(default_factory=dict, description="Questions asked & depth scores per topic")
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     started_at: Optional[str] = None
     completed_at: Optional[str] = None

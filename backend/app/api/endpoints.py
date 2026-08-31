@@ -20,7 +20,8 @@ from app.models.interview import (
 )
 from app.db.mongo import InterviewSessionRepository
 from app.interview.prompt_builder import InterviewPromptBuilder
-from app.interview.state_machine import InterviewStateMachine, STAGE_SEQUENCE, STAGE_DISPLAY_NAMES, StageBudget
+from app.interview.state_machine import InterviewStateMachine, STAGE_SEQUENCE, STAGE_DISPLAY_NAMES
+from app.interview.adaptive_engine import AdaptiveQuestionEngine, AdaptiveAction
 
 logger = get_logger("api.endpoints")
 router = APIRouter()
@@ -31,8 +32,9 @@ streaming_pipeline = StreamingVoicePipeline()
 turn_detector = TurnDetector()
 barge_in_detector = BargeInDetector()
 
-# In-memory active session state machines
+# In-memory active session state machines & adaptive engines
 active_state_machines: Dict[str, InterviewStateMachine] = {}
+active_adaptive_engines: Dict[str, AdaptiveQuestionEngine] = {}
 
 class TokenRequest(BaseModel):
     room_name: str = Field(..., description="Unique LiveKit room name")
@@ -62,6 +64,9 @@ class VoiceTurnResponse(BaseModel):
     current_stage: str
     stage_display_name: str
     progress_pct: float
+    adaptive_strategy: Optional[str] = None
+    evaluated_depth: Optional[str] = None
+    topic_coverage: Optional[Dict[str, Any]] = None
     metrics: Dict[str, Any]
 
 class VADFrameRequest(BaseModel):
@@ -81,9 +86,6 @@ class VADFrameResponse(BaseModel):
 
 @router.get("/api/interview/templates")
 async def get_interview_templates() -> Dict[str, Any]:
-    """
-    Returns available roles, experience levels, default topics, and supported languages.
-    """
     return {
         "roles": [r.value for r in InterviewRole],
         "experience_levels": [e.value for e in ExperienceLevel],
@@ -98,9 +100,6 @@ async def get_interview_templates() -> Dict[str, Any]:
 
 @router.get("/api/interview/stages")
 async def get_interview_stages(duration_minutes: int = 30) -> List[Dict[str, Any]]:
-    """
-    Returns the 6 interview stages with time budgets for the given duration.
-    """
     dummy_config = InterviewConfig(duration_minutes=duration_minutes)
     sm = InterviewStateMachine(config=dummy_config)
     budgets = sm.get_budgets()
@@ -108,9 +107,6 @@ async def get_interview_stages(duration_minutes: int = 30) -> List[Dict[str, Any
 
 @router.post("/api/interview/session", response_model=InterviewSession)
 async def create_interview_session(config: InterviewConfig, candidate_name: str = "Candidate") -> InterviewSession:
-    """
-    Create and persist a new technical interview session in MongoDB with initial GREETING stage.
-    """
     session = InterviewSession(
         candidate_name=candidate_name,
         config=config,
@@ -119,13 +115,11 @@ async def create_interview_session(config: InterviewConfig, candidate_name: str 
     )
     saved = await InterviewSessionRepository.create_session(session)
     active_state_machines[session.session_id] = InterviewStateMachine(config=config, initial_stage=InterviewStage.GREETING)
+    active_adaptive_engines[session.session_id] = AdaptiveQuestionEngine(config=config)
     return saved
 
 @router.get("/api/interview/session/{session_id}", response_model=InterviewSession)
 async def get_interview_session(session_id: str) -> InterviewSession:
-    """
-    Retrieve interview session details and transcript history from MongoDB.
-    """
     session = await InterviewSessionRepository.get_session(session_id)
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
@@ -133,9 +127,6 @@ async def get_interview_session(session_id: str) -> InterviewSession:
 
 @router.get("/api/interview/sessions", response_model=List[InterviewSession])
 async def list_interview_sessions(candidate_id: Optional[str] = None, limit: int = 20) -> List[InterviewSession]:
-    """
-    List previous interview sessions from MongoDB.
-    """
     return await InterviewSessionRepository.list_sessions(candidate_id=candidate_id, limit=limit)
 
 # ==========================================
@@ -159,7 +150,8 @@ async def health_check() -> Dict[str, Any]:
             "streaming": True,
             "barge_in": settings.BARGE_IN_ENABLED,
             "interview_foundation": True,
-            "interview_state_machine": True
+            "interview_state_machine": True,
+            "adaptive_question_engine": True
         }
     }
 
@@ -241,11 +233,11 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
             for item in req.history:
                 history_msgs.append(LLMMessage(role=item.get("role", "user"), content=item.get("content", "")))
 
-        # Retrieve session context and state machine
         system_prompt = None
         session = None
         current_stage = InterviewStage.GREETING
         progress_pct = 16.6
+        adaptive_action = None
         
         if req.session_id:
             session = await InterviewSessionRepository.get_session(req.session_id)
@@ -255,17 +247,29 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
                         config=session.config,
                         initial_stage=session.current_stage
                     )
+                if req.session_id not in active_adaptive_engines:
+                    active_adaptive_engines[req.session_id] = AdaptiveQuestionEngine(config=session.config)
+
                 sm = active_state_machines[req.session_id]
+                ae = active_adaptive_engines[req.session_id]
                 
-                # Advance state machine with this turn
-                trans_res = sm.step_turn(last_candidate_reply=req.text or "")
+                # Advance state machine and adaptive engine
+                candidate_text = req.text or ""
+                trans_res = sm.step_turn(last_candidate_reply=candidate_text)
                 current_stage = trans_res.current_stage
                 progress_pct = trans_res.progress_pct
+
+                if current_stage in [InterviewStage.RESUME_DEEP_DIVE, InterviewStage.CORE_CONCEPTS, InterviewStage.SYSTEM_DESIGN]:
+                    adaptive_action = ae.analyze_turn_and_plan(
+                        last_candidate_reply=candidate_text,
+                        current_stage=current_stage
+                    )
                 
                 system_prompt = InterviewPromptBuilder.build_system_prompt(
                     config=session.config,
                     candidate_name=session.candidate_name,
-                    stage=current_stage
+                    stage=current_stage,
+                    adaptive_action=adaptive_action
                 )
 
         if req.text and isinstance(voice_pipeline.stt, type(VoiceProviderFactory.get_stt_provider("mock"))):
@@ -282,7 +286,9 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
             session.transcripts.append(TranscriptEntry(
                 stage=current_stage,
                 role="candidate", 
-                text=turn_result.transcript
+                text=turn_result.transcript,
+                evaluated_depth=adaptive_action.evaluated_depth.value if adaptive_action else None,
+                adaptive_strategy=adaptive_action.strategy.value if adaptive_action else None
             ))
             session.transcripts.append(TranscriptEntry(
                 stage=current_stage,
@@ -293,11 +299,14 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
             session.turn_count += 1
             session.current_stage = current_stage
             session.stage_turn_counts = sm.stage_turn_counts
+            session.topic_coverage = ae.topic_stats if 'ae' in locals() else {}
+
             await InterviewSessionRepository.update_session(session.session_id, {
                 "transcripts": [t.model_dump() for t in session.transcripts],
                 "turn_count": session.turn_count,
                 "current_stage": session.current_stage.value,
-                "stage_turn_counts": session.stage_turn_counts
+                "stage_turn_counts": session.stage_turn_counts,
+                "topic_coverage": session.topic_coverage
             })
 
         return VoiceTurnResponse(
@@ -308,6 +317,9 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
             current_stage=current_stage.value,
             stage_display_name=STAGE_DISPLAY_NAMES[current_stage],
             progress_pct=progress_pct,
+            adaptive_strategy=adaptive_action.strategy_display if adaptive_action else None,
+            evaluated_depth=adaptive_action.evaluated_depth.value if adaptive_action else None,
+            topic_coverage=session.topic_coverage if session else None,
             metrics=turn_result.metrics.model_dump()
         )
     except Exception as e:
@@ -320,7 +332,7 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
 @router.websocket("/api/voice/stream/ws")
 async def voice_streaming_websocket(websocket: WebSocket):
     """
-    Full-duplex WebSocket endpoint for real-time streaming voice sessions with State Machine progression.
+    Full-duplex WebSocket endpoint for real-time streaming voice sessions with State Machine and Adaptive Question Engine.
     """
     await websocket.accept()
     logger.info("WebSocket voice stream client connected")
@@ -350,6 +362,7 @@ async def voice_streaming_websocket(websocket: WebSocket):
             
             system_prompt = None
             current_stage = InterviewStage.GREETING
+            adaptive_action = None
             
             if session_id:
                 session = await InterviewSessionRepository.get_session(session_id)
@@ -359,9 +372,21 @@ async def voice_streaming_websocket(websocket: WebSocket):
                             config=session.config,
                             initial_stage=session.current_stage
                         )
+                    if session_id not in active_adaptive_engines:
+                        active_adaptive_engines[session_id] = AdaptiveQuestionEngine(config=session.config)
+
                     sm = active_state_machines[session_id]
-                    trans_res = sm.step_turn(last_candidate_reply=text or "")
+                    ae = active_adaptive_engines[session_id]
+                    
+                    candidate_text = text or ""
+                    trans_res = sm.step_turn(last_candidate_reply=candidate_text)
                     current_stage = trans_res.current_stage
+
+                    if current_stage in [InterviewStage.RESUME_DEEP_DIVE, InterviewStage.CORE_CONCEPTS, InterviewStage.SYSTEM_DESIGN]:
+                        adaptive_action = ae.analyze_turn_and_plan(
+                            last_candidate_reply=candidate_text,
+                            current_stage=current_stage
+                        )
 
                     # Emit stage transition event if advanced
                     if trans_res.transitioned:
@@ -372,10 +397,20 @@ async def voice_streaming_websocket(websocket: WebSocket):
                             "progress_pct": trans_res.progress_pct
                         })
 
+                    # Emit adaptive strategy event
+                    if adaptive_action:
+                        await websocket.send_json({
+                            "event_type": "adaptive_action",
+                            "strategy_display": adaptive_action.strategy_display,
+                            "evaluated_depth": adaptive_action.evaluated_depth.value,
+                            "topic": adaptive_action.target_topic
+                        })
+
                     system_prompt = InterviewPromptBuilder.build_system_prompt(
                         config=session.config,
                         candidate_name=session.candidate_name,
-                        stage=current_stage
+                        stage=current_stage,
+                        adaptive_action=adaptive_action
                     )
 
             history_msgs = [
@@ -399,6 +434,7 @@ async def voice_streaming_websocket(websocket: WebSocket):
                     "vad_status": event.vad_status,
                     "text": event.text,
                     "stage": current_stage.value,
+                    "adaptive_strategy": adaptive_action.strategy_display if adaptive_action else None,
                     "audio_format": event.audio_format
                 }
                 if event.audio_bytes:

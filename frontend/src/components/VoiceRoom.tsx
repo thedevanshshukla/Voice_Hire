@@ -25,6 +25,7 @@ interface TranscriptMessage {
   role: 'candidate' | 'interviewer';
   text: string;
   stage?: string;
+  adaptiveStrategy?: string;
   audioBase64?: string;
   metrics?: VoiceMetrics;
   isStreaming?: boolean;
@@ -59,6 +60,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
   const [currentStage, setCurrentStage] = useState<string>('greeting');
   const [stageProgressPct, setStageProgressPct] = useState<number>(16.6);
   const [stageNotification, setStageNotification] = useState<string | null>(null);
+  const [adaptiveStrategy, setAdaptiveStrategy] = useState<string | null>(null);
   
   const [inputText, setInputText] = useState('');
   const [sessionToken, setSessionToken] = useState<string | null>(null);
@@ -172,7 +174,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
     }
   };
 
-  // Process streaming turn over WebSocket with State Machine progression
+  // Process streaming turn over WebSocket with State Machine & Adaptive Question Engine
   const handleSendStreamingTurn = async (textToSend: string) => {
     cancelActiveAudio();
     const wsUrl = apiUrl.replace(/^http/, 'ws') + '/api/voice/stream/ws';
@@ -219,6 +221,8 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
           setStageProgressPct(payload.progress_pct);
           setStageNotification(`🎯 Stage Advanced: ${payload.stage_display_name}`);
           setTimeout(() => setStageNotification(null), 4000);
+        } else if (payload.event_type === 'adaptive_action') {
+          setAdaptiveStrategy(payload.strategy_display);
         } else if (payload.event_type === 'vad_event') {
           if (payload.vad_status === 'candidate_speaking') setVadState('speaking');
           else if (payload.vad_status === 'candidate_paused') setVadState('paused');
@@ -331,11 +335,15 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
         setCurrentStage(data.current_stage);
         setStageProgressPct(data.progress_pct);
       }
+      if (data.adaptive_strategy) {
+        setAdaptiveStrategy(data.adaptive_strategy);
+      }
 
       const agentMsg: TranscriptMessage = {
         id: `agent-${Date.now()}`,
         role: 'interviewer',
         stage: data.current_stage || currentStage,
+        adaptiveStrategy: data.adaptive_strategy,
         text: data.response_text,
         audioBase64: data.audio_base64,
         metrics: data.metrics,
@@ -380,7 +388,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
               )}
             </div>
             <span className="room-subtitle">
-              {isConnected ? `Candidate: ${candidateName} • ${agentStatus.toUpperCase()}` : 'LiveKit WebRTC Interview State Machine v0.7.0'}
+              {isConnected ? `Candidate: ${candidateName} • ${agentStatus.toUpperCase()}` : 'LiveKit WebRTC Adaptive Question Engine v0.8.0'}
             </span>
           </div>
         </div>
@@ -477,7 +485,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
           <div className="setup-icon">🎙️</div>
           <h2>Launch Interview Session</h2>
           <p className="setup-description">
-            Connecting to LiveKit WebRTC channel with MongoDB session persistence and 6-stage interview progression.
+            Connecting to LiveKit WebRTC channel with Adaptive Question Engine and dynamic depth probing.
           </p>
 
           <div className="form-group">
@@ -520,6 +528,13 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                 {vadState === 'idle' && '⚪ Ready / Listening'}
               </div>
 
+              {/* Adaptive Strategy Pill */}
+              {adaptiveStrategy && (
+                <div className="adaptive-strategy-pill">
+                  {adaptiveStrategy}
+                </div>
+              )}
+
               {/* Barge-In Action Button */}
               {agentStatus === 'speaking' && (
                 <button className="btn-barge-in" onClick={handleInterrupt}>
@@ -539,7 +554,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
             </div>
             <div className="agent-state-label">
               {agentStatus === 'listening' && '👂 Listening to candidate...'}
-              {agentStatus === 'thinking' && '⚡ Streaming LLM tokens & TTS chunks...'}
+              {agentStatus === 'thinking' && '⚡ Evaluating depth & formulating next question...'}
               {agentStatus === 'speaking' && '🗣️ Agent speaking (Candidate can interrupt anytime)...'}
               {agentStatus === 'idle' && 'Ready'}
             </div>
@@ -605,7 +620,10 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                   <span className="bubble-author">
                     {msg.role === 'candidate' ? `🧑 ${candidateName}` : '🤖 AI Interviewer'}
                   </span>
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                    {msg.adaptiveStrategy && (
+                      <span className="bubble-strategy-tag">{msg.adaptiveStrategy}</span>
+                    )}
                     {msg.stage && <span className="bubble-stage-tag">{msg.stage}</span>}
                     <span className="bubble-time">{msg.timestamp}</span>
                   </div>
@@ -661,18 +679,18 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                 className="chip-btn"
                 onClick={() => {
                   handleInterrupt();
-                  handleSendTurn('Let me explain our database sharding and index strategy.');
+                  handleSendTurn('We used Redis for caching to speed up the database reads.');
                 }}
                 disabled={isProcessing}
               >
-                "Explain database sharding"
+                "Shallow: We used Redis for caching"
               </button>
               <button
                 className="chip-btn"
-                onClick={() => handleSendTurn('We use optimistic locking with version columns to avoid deadlocks under high concurrency.')}
+                onClick={() => handleSendTurn('We prevented cache stampede using distributed mutex locks with TTL jitter and probabilistic early expiration.')}
                 disabled={isProcessing}
               >
-                "Optimistic locking concurrency"
+                "Strong: Cache stampede with mutex jitter"
               </button>
             </div>
 
