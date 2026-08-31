@@ -12,7 +12,7 @@ logger = get_logger("interview.evidence_engine")
 RED_FLAG_PATTERNS = [
     {
         "category": "FATAL_MISCONCEPTION",
-        "pattern": r"(zero latency|no latency|100% consistent.*no tradeoff|acid across microservices without|never drops|never fails)",
+        "pattern": r"(zero[- ]latency|no latency|100% (acid|consistent).*no tradeoff|acid across microservices|never drops|never fails)",
         "severity": "HIGH",
         "explanation": "Claimed zero-latency or impossible consistency guarantees without trade-offs in distributed systems."
     },

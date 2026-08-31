@@ -121,11 +121,14 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
   
   const [sessionScorecard, setSessionScorecard] = useState<SessionScorecard | null>(null);
   const [evidenceReport, setEvidenceReport] = useState<EvidenceEvaluationReport | null>(null);
-  const [modalTab, setModalTab] = useState<'scorecard' | 'evidence' | 'tools'>('scorecard');
+  const [modalTab, setModalTab] = useState<'scorecard' | 'evidence' | 'tools' | 'benchmark'>('scorecard');
   const [activeDiagram, setActiveDiagram] = useState<any>(null);
   const [sandboxCode, setSandboxCode] = useState<string>('def two_sum(nums, target):\n    seen = {}\n    for i, n in enumerate(nums):\n        if target - n in seen:\n            return [seen[target - n], i]\n        seen[n] = i\n\nprint("Result:", two_sum([2, 7, 11, 15], 9))');
   const [sandboxOutput, setSandboxOutput] = useState<any>(null);
   const [isExecutingCode, setIsExecutingCode] = useState<boolean>(false);
+  const [benchmarkData, setBenchmarkData] = useState<any>(null);
+  const [isRunningBenchmark, setIsRunningBenchmark] = useState<boolean>(false);
+  const [assignedVariants, setAssignedVariants] = useState<Record<string, string> | null>(null);
   const [latestTurnScore, setLatestTurnScore] = useState<number | null>(null);
   const [detectedLanguage, setDetectedLanguage] = useState<string>(activeSession?.config.language || 'English');
   const [showScorecardModal, setShowScorecardModal] = useState<boolean>(false);
@@ -286,6 +289,21 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
     }
   };
 
+  const handleRunBenchmark = async () => {
+    setIsRunningBenchmark(true);
+    try {
+      const res = await fetch(`${apiUrl}/api/evaluation/run-benchmark`, { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setBenchmarkData(data);
+      }
+    } catch (err) {
+      console.error('Benchmark error:', err);
+    } finally {
+      setIsRunningBenchmark(false);
+    }
+  };
+
   // Process streaming turn over WebSocket with Answer & Evidence Evaluation
   const handleSendStreamingTurn = async (textToSend: string, userMsgId: string) => {
     cancelActiveAudio();
@@ -361,6 +379,9 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
         }
         if (payload.detected_language) {
           setDetectedLanguage(payload.detected_language);
+        }
+        if (payload.assigned_variants) {
+          setAssignedVariants(payload.assigned_variants);
         }
         if (payload.memory_claims_count !== undefined) {
           setMemoryClaimsCount(payload.memory_claims_count);
@@ -492,6 +513,9 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
       }
       if (data.evidence_report) {
         setEvidenceReport(data.evidence_report);
+      }
+      if (data.assigned_variants) {
+        setAssignedVariants(data.assigned_variants);
       }
 
       const agentMsg: TranscriptMessage = {
@@ -685,6 +709,15 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                   >
                     🛠️ Architecture & Tools
                   </button>
+                  <button 
+                    className={`tab-btn ${modalTab === 'benchmark' ? 'active' : ''}`}
+                    onClick={() => {
+                      setModalTab('benchmark');
+                      if (!benchmarkData) handleRunBenchmark();
+                    }}
+                  >
+                    🧪 Benchmarks
+                  </button>
                 </div>
                 <button className="btn-close" onClick={() => setShowScorecardModal(false)}>✕</button>
               </div>
@@ -850,7 +883,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                     </div>
                   </div>
                 </div>
-              ) : (
+              ) : modalTab === 'tools' ? (
                 /* Tools & Architecture Tab */
                 <div className="tools-tab-content">
                   {/* System Architecture Diagram Card */}
@@ -906,6 +939,70 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                       </div>
                     )}
                   </div>
+                </div>
+              ) : (
+                /* Benchmark Suite Tab */
+                <div className="benchmark-tab-content">
+                  <div className="benchmark-hero">
+                    <div>
+                      <h4>🧪 AI Evaluator Calibration Benchmark</h4>
+                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                        Evaluates scoring calibration (MAE) and red flag detection accuracy against human-graded golden samples.
+                      </p>
+                    </div>
+                    <button className="btn btn-primary btn-sm" onClick={handleRunBenchmark} disabled={isRunningBenchmark}>
+                      {isRunningBenchmark ? 'Running Suite...' : '⚡ Run Evaluation Benchmark'}
+                    </button>
+                  </div>
+
+                  {benchmarkData && (
+                    <div className="benchmark-metrics-grid">
+                      <div className="benchmark-metric-card">
+                        <div className="metric-num">{benchmarkData.mean_absolute_error.toFixed(2)}</div>
+                        <div className="metric-lbl">Mean Absolute Error (MAE)</div>
+                      </div>
+                      <div className="benchmark-metric-card">
+                        <div className="metric-num">{benchmarkData.accuracy_within_half_point_pct}%</div>
+                        <div className="metric-lbl">Score Calibration (±0.8 pts)</div>
+                      </div>
+                      <div className="benchmark-metric-card">
+                        <div className="metric-num">{Math.round(benchmarkData.red_flag_precision * 100)}%</div>
+                        <div className="metric-lbl">Red Flag Precision</div>
+                      </div>
+                      <div className="benchmark-metric-card">
+                        <div className="metric-num">{Math.round(benchmarkData.red_flag_recall * 100)}%</div>
+                        <div className="metric-lbl">Red Flag Recall</div>
+                      </div>
+                    </div>
+                  )}
+
+                  {benchmarkData?.sample_results && (
+                    <div className="benchmark-samples-table">
+                      <h5>Golden Calibration Dataset ({benchmarkData.sample_results.length} samples)</h5>
+                      <table className="benchmark-table">
+                        <thead>
+                          <tr>
+                            <th>Sample ID</th>
+                            <th>Expected Score</th>
+                            <th>Predicted Score</th>
+                            <th>Error</th>
+                            <th>Red Flag</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {benchmarkData.sample_results.map((res: any) => (
+                            <tr key={res.sample_id}>
+                              <td><code>{res.sample_id}</code></td>
+                              <td>⭐ {res.expected_score.toFixed(1)}</td>
+                              <td>⭐ {res.predicted_score.toFixed(1)}</td>
+                              <td><span className={`error-tag ${res.absolute_error < 0.5 ? 'good' : 'warn'}`}>±{res.absolute_error.toFixed(2)}</span></td>
+                              <td>{res.detected_red_flag ? `🚩 ${res.detected_red_flag}` : '✓ Clean'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -997,6 +1094,13 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                 </div>
               )}
 
+              {/* A/B Experiment Variant Pill */}
+              {assignedVariants && (
+                <div className="experiment-hud-pill" title={JSON.stringify(assignedVariants)}>
+                  🧪 A/B: {assignedVariants.exp_llm_model ? assignedVariants.exp_llm_model.replace('control_', '').replace('treatment_', '') : 'Active'}
+                </div>
+              )}
+
               {/* Red Flag Badge if detected */}
               {evidenceReport?.red_flags && evidenceReport.red_flags.length > 0 && (
                 <div className="red-flag-hud-pill">
@@ -1054,6 +1158,21 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                 <div className="hud-metric">
                   <span className="hud-label">Perceived</span>
                   <span className="hud-val perceived">{activeMetrics.total_perceived_ms ?? activeMetrics.total_latency_ms ?? 0}ms</span>
+                </div>
+              </div>
+            )}
+
+            {/* Waterfall Latency Timeline Breakdown */}
+            {activeMetrics && (
+              <div className="waterfall-latency-bar">
+                <div className="waterfall-segment stt" style={{ flex: Math.max(1, activeMetrics.stt_latency_ms ?? 50) }} title={`STT: ${activeMetrics.stt_latency_ms ?? 50}ms`}>
+                  STT
+                </div>
+                <div className="waterfall-segment llm" style={{ flex: Math.max(1, activeMetrics.llm_ttft_ms ?? 150) }} title={`LLM TTFT: ${activeMetrics.llm_ttft_ms ?? 150}ms`}>
+                  TTFT
+                </div>
+                <div className="waterfall-segment tts" style={{ flex: Math.max(1, activeMetrics.tts_ttfa_ms ?? 120) }} title={`TTS TTFA: ${activeMetrics.tts_ttfa_ms ?? 120}ms`}>
+                  TTFA
                 </div>
               </div>
             )}

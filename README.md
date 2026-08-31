@@ -2,7 +2,7 @@
 
 ### Realtime AI Technical Interviewer
 
-VoiceHire is a production-oriented realtime Voice AI technical interviewer designed to conduct structured, adaptive technical interviews for software developers. Powered by LiveKit, FastAPI, React, and advanced LLM orchestrations, it goes beyond simple speech-to-text queries to implement natural turn-taking, barge-in detection, an adaptive question engine with depth probing, evidence-based evaluations, mid-interview Knowledge Base RAG, conversational memory, agent tool execution, and multilingual English + Hindi + Hinglish support with dynamic code-switching.
+VoiceHire is a production-oriented realtime Voice AI technical interviewer designed to conduct structured, adaptive technical interviews for software developers. Powered by LiveKit, FastAPI, React, and advanced LLM orchestrations, it goes beyond simple speech-to-text queries to implement natural turn-taking, barge-in detection, an adaptive question engine with depth probing, evidence-based evaluations, mid-interview Knowledge Base RAG, conversational memory, agent tool execution, multilingual English + Hindi + Hinglish support, distributed observability metrics, A/B experimentation, and automated evaluation benchmark suites.
 
 ---
 
@@ -21,74 +21,62 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
 - [x] **`v0.11.0` (Knowledge Base & RAG)**
 - [x] **`v0.12.0` (Memory & Cross-Turn Synthesis)**
 - [x] **`v0.13.0` (Agent Tools / Actions)**
-- [x] **`v0.14.0` (Multilingual support: English + Hindi + Hinglish)** ── *Current Release*
-- [ ] `v0.15.0` (Observability)
-- [ ] `v0.16.0` (Voice AI Experimentation)
-- [ ] `v0.17.0` (Evaluation Suite)
+- [x] **`v0.14.0` (Multilingual support: English + Hindi + Hinglish)**
+- [x] **`v0.15.0` (Observability & Prometheus Telemetry)**
+- [x] **`v0.16.0` (Voice AI Experimentation & A/B Testing)**
+- [x] **`v0.17.0` (Evaluation Suite & Benchmark Runner)** ── *Current Release*
 - [ ] `v0.18.0` (Reliability & Security)
 - [ ] `v0.19.0` (Scale & Load Testing)
 - [ ] `v1.0.0` (Final Production Polish)
 
 ---
 
-## 🏗️ Architecture (v0.14.0)
+## 🏗️ Architecture (v0.17.0)
 
 ```
                     ┌──────────────────────────────┐
                     │      Candidate Browser       │
                     │   React / Vite / TypeScript  │
+                    │  - Latency Waterfall HUD     │
+                    │  - A/B Experiment Badge (🧪) │
+                    │  - Evaluation Benchmark Tab  │
                     │  - Language Selector & HUD   │
                     │  - Architecture Diagram View │
                     │  - Python Sandbox Console    │
-                    │  - Memory Claims HUD (🧠)    │
-                    │  - Live Scorecard & Evidence │
                     └──────────────┬───────────────┘
                                    │
                       WebSocket / REST / WebRTC
                                    │
                     ┌──────────────▼───────────────┐
                     │       FastAPI Backend        │
-                    │  - /api/voice/detect-language│
+                    │  - GET /metrics (Prometheus) │
+                    │  - /api/experiments/*        │
+                    │  - /api/evaluation/*         │
                     │  - /api/agent/tools          │
-                    │  - /api/interview/memory     │
                     │  - WS /api/voice/stream/ws   │
                     └──────────────┬───────────────┘
                                    │
-            ┌──────────────────────┼──────────────────────┐
-            ▼                      ▼                      ▼
-     ┌─────────────┐        ┌─────────────┐        ┌─────────────┐
-     │ Multilingual│        │ Agent Tool  │        │ Memory &    │
-     │ Language    │ ──►   │ Executor    │ ◄──►   │ Profile     │
-     │ Detector    │        │ (Sandbox/Di)│        │ Engine      │
-     └─────────────┘        └─────────────┘        └─────────────┘
-            │                      │                      │
-            └──────────────────────┴──────────────────────┘
-                                   │ Persists Sessions, Claims & Profiles
-                    ┌──────────────▼───────────────┐
-                    │        MongoDB Atlas         │
-                    │   - Working Memory Claims    │
-                    │   - Multi-Round Profiles     │
-                    └──────────────────────────────┘
+     ┌──────────────────────┬──────┴───────────────┬──────────────────────┐
+     ▼                      ▼                      ▼                      ▼
+┌─────────────┐        ┌─────────────┐        ┌─────────────┐        ┌─────────────┐
+│ Observability│       │ A/B Engine  │        │ Benchmark   │        │ Agent Tools │
+│ (TurnSpan & │        │ (Variant    │        │ Runner      │        │ & Memory    │
+│ Prometheus) │        │ Allocation) │        │ (MAE Eval)  │        │ Engines     │
+└─────────────┘        └─────────────┘        └─────────────┘        └─────────────┘
 ```
 
 ---
 
-## ✨ Features (v0.14.0)
+## ✨ Key Capabilities
 
-- **Multilingual Support (English + Hindi + Hinglish)**: Conduct interviews in English, pure Hindi (Devanagari script), or natural Indian tech "Hinglish" (conversational Hindi flow with strict English technical vocabulary preservation).
-- **Dynamic Code-Switching Detection**: Automatically detects when a candidate switches languages mid-interview and adjusts voice routing accordingly.
-- **Agent Tool Execution & Sandboxing**: Execute candidate-provided Python code snippets in a timed sandbox and view live stdout/stderr execution outputs.
-- **Dynamic Architecture Diagram Generator**: Synthesizes Mermaid flowchart syntax and visual node-edge topologies from the candidate's proposed system design.
-- **Official Documentation Lookup**: Authoritative reference specs (PostgreSQL MVCC, Kafka rebalances, Redis clustering) to verify technical mechanisms.
-- **Short-Term Conversational Memory**: Captures candidate architectural claims and weaves natural cross-turn references into subsequent questions (*"Earlier in past projects you mentioned using Redis..."*).
-- **Contradiction Detection**: Automatically detects conflicting claims made across turns.
-- **Long-Term Multi-Round Candidate Profiles**: Persists candidate scores, strengths, weaknesses, and previously asked questions across multiple rounds.
-- **Knowledge Base Ingestion & RAG**: Ground questions and answer verification in official company engineering standards.
-- **Verbatim Transcript Quote Citations**: Automatically backs every strength and gap with direct candidate quotation snippets.
-- **Technical Red Flag Detection**: Flags unsupported claims, fatal architectural misconceptions, and network failure ignorance.
-- **5-Dimensional Answer Evaluation**: Automatically scores responses across *Correctness*, *Depth & Mechanics*, *Trade-off Awareness*, *Practical vs Theory*, and *Communication Clarity*.
-- **Adaptive Question Engine**: Dynamic depth analysis and specialized mechanical follow-up probes.
-- **Real-time Barge-In & Interruption**: Interrupt the AI interviewer naturally mid-sentence with sub-200ms audio cancellation.
+- **Evaluation Benchmark Suite & Scoring Calibration (`v0.17.0`)**: Pre-packaged golden candidate transcripts across SDE-1, SDE-2, Senior, and Staff levels automatically calibrated against human grading baselines, computing Mean Absolute Error (MAE < 1.0) and red flag precision/recall.
+- **Voice AI A/B Experimentation (`v0.16.0`)**: Online multi-variant A/B testing comparing LLMs (Gemini 1.5 Flash vs OpenAI GPT-4o-mini), TTS engines (Deepgram Aura vs ElevenLabs Multilingual), and chunking strategies on live turn latencies and scorecard scores.
+- **Distributed Observability & Prometheus Telemetry (`v0.15.0`)**: Granular `TurnSpan` tracking across audio ingestion, VAD endpointing, STT, LLM TTFT, tool execution, and TTS TTFA with a standard `GET /metrics` scrape endpoint and frontend waterfall latency charts.
+- **Multilingual Support (English + Hindi + Hinglish) (`v0.14.0`)**: Real-time code-switching detection and technical vocabulary preservation.
+- **Agent Tool Calling & Python Sandbox (`v0.13.0`)**: Mid-interview code execution and automated Mermaid architecture diagram generation.
+- **Conversational Memory & Contradiction Detection (`v0.12.0`)**: Cross-turn continuity callbacks and candidate profile tracking.
+- **Knowledge Base RAG (`v0.11.0`)**: Verification against company engineering standards.
+- **Evidence-Based Evaluation (`v0.10.0`)**: Verbatim quote citations and technical red flag audits.
 
 ---
 
@@ -96,36 +84,8 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
 
 - **Backend**: FastAPI, Python 3.11/3.13, LiveKit API, WebSockets, Pytest, Motor / PyMongo
 - **Frontend**: React, Vite, TypeScript, Vanilla HSL CSS
-- **Voice Providers**: Deepgram (STT/TTS with multilingual models), OpenAI & Gemini (LLM), ElevenLabs (Multilingual v2 TTS)
+- **Voice Providers**: Deepgram (STT/TTS), OpenAI & Gemini (LLM), ElevenLabs (TTS)
 - **Database**: MongoDB Atlas
-
----
-
-## 🚀 Setup & Local Execution
-
-### 1. Start Backend:
-```bash
-cd backend
-python -m venv .venv
-# On Windows PowerShell: .venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python -m uvicorn app.main:app --reload --port 8000
-```
-Backend API will run at [http://localhost:8000](http://localhost:8000).
-
-### 2. Start Frontend:
-```bash
-cd frontend
-npm install
-npm run dev
-```
-Frontend will run at [http://localhost:5173](http://localhost:5173).
-
-### 3. Run Test Suite:
-```bash
-cd backend
-pytest tests
-```
 
 ---
 
@@ -145,17 +105,6 @@ pytest tests
 - [ADR-012: Short-Term Cross-Turn Memory & Long-Term Candidate Profiling](docs/decisions/ADR-012-memory-cross-turn.md)
 - [ADR-013: Mid-Interview Agent Tools, Code Sandbox & Architecture Visualizer](docs/decisions/ADR-013-agent-tools-and-actions.md)
 - [ADR-014: Multilingual Support (English, Hindi & Hinglish) & Dynamic Code-Switching](docs/decisions/ADR-014-multilingual-support.md)
-- [Version 0.1.0 Release Notes](docs/versions/v0.1.md)
-- [Version 0.2.0 Release Notes](docs/versions/v0.2.md)
-- [Version 0.3.0 Release Notes](docs/versions/v0.3.md)
-- [Version 0.4.0 Release Notes](docs/versions/v0.4.md)
-- [Version 0.5.0 Release Notes](docs/versions/v0.5.md)
-- [Version 0.6.0 Release Notes](docs/versions/v0.6.md)
-- [Version 0.7.0 Release Notes](docs/versions/v0.7.md)
-- [Version 0.8.0 Release Notes](docs/versions/v0.8.md)
-- [Version 0.9.0 Release Notes](docs/versions/v0.9.md)
-- [Version 0.10.0 Release Notes](docs/versions/v0.10.md)
-- [Version 0.11.0 Release Notes](docs/versions/v0.11.md)
-- [Version 0.12.0 Release Notes](docs/versions/v0.12.md)
-- [Version 0.13.0 Release Notes](docs/versions/v0.13.md)
-- [Version 0.14.0 Release Notes](docs/versions/v0.14.md)
+- [ADR-015: Observability, Distributed Turn Spans & Prometheus Metrics](docs/decisions/ADR-015-observability-telemetry.md)
+- [ADR-016: Voice AI A/B Experimentation & Multi-Variant Evaluation](docs/decisions/ADR-016-ab-experimentation.md)
+- [ADR-017: Golden Standard Evaluation Benchmark Suite & Scoring Calibration](docs/decisions/ADR-017-evaluation-benchmark-suite.md)

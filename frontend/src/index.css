@@ -2082,3 +2082,136 @@ body {
   }
 }
 
+/* ==========================================
+   Observability, A/B & Benchmark Styles (v0.15.0 - v0.17.0)
+   ========================================== */
+
+.experiment-hud-pill {
+  font-family: var(--font-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(236, 72, 153, 0.6);
+  background: rgba(236, 72, 153, 0.15);
+  color: #f472b6;
+  box-shadow: 0 0 10px rgba(236, 72, 153, 0.2);
+  animation: fade-in-up 0.2s ease-out;
+}
+
+.waterfall-latency-bar {
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-top: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  gap: 2px;
+}
+
+.waterfall-segment {
+  font-size: 9px;
+  text-align: center;
+  line-height: 8px;
+  color: rgba(255, 255, 255, 0.7);
+  transition: flex 0.3s ease;
+}
+
+.waterfall-segment.stt {
+  background: rgba(59, 130, 246, 0.6);
+}
+
+.waterfall-segment.llm {
+  background: rgba(16, 185, 129, 0.6);
+}
+
+.waterfall-segment.tts {
+  background: rgba(139, 92, 246, 0.6);
+}
+
+.benchmark-tab-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.benchmark-hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 16px;
+  border-radius: 8px;
+}
+
+.benchmark-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.benchmark-metric-card {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 14px;
+  border-radius: 8px;
+  text-align: center;
+}
+
+.benchmark-metric-card .metric-num {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--accent-purple);
+}
+
+.benchmark-metric-card .metric-lbl {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+.benchmark-samples-table {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 14px;
+  border-radius: 8px;
+}
+
+.benchmark-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+.benchmark-table th {
+  text-align: left;
+  padding: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-secondary);
+}
+
+.benchmark-table td {
+  padding: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.error-tag {
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.error-tag.good {
+  background: rgba(16, 185, 129, 0.2);
+  color: #6ee7b7;
+}
+
+.error-tag.warn {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fcd34d;
+}
+

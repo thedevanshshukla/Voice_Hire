@@ -1,7 +1,8 @@
 import base64
 import json
+import time
 from typing import Dict, Any, Optional, List
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, status, Response
 from pydantic import BaseModel, Field
 
 from app.config import settings
@@ -26,6 +27,8 @@ from app.models.tools import (
     ToolResult, ArchitectureDiagramPayload, CodeExecutionPayload,
     DocumentationLookupPayload, HumanFlagPayload, ExecuteToolRequest
 )
+from app.models.experiments import ExperimentConfig, ExperimentResult
+from app.models.benchmark import BenchmarkRunSummary
 from app.db.mongo import InterviewSessionRepository
 from app.interview.prompt_builder import InterviewPromptBuilder
 from app.interview.state_machine import InterviewStateMachine, STAGE_SEQUENCE, STAGE_DISPLAY_NAMES
@@ -35,6 +38,9 @@ from app.interview.evidence_engine import EvidenceEvaluator
 from app.interview.memory_engine import InterviewMemoryEngine, CandidateProfileRepository
 from app.knowledge.rag_engine import KnowledgeRAGEngine
 from app.agent.tools.executor import AgentToolExecutor
+from app.observability.telemetry import TurnSpan, MetricsExporter
+from app.experiments.ab_engine import ABExperimentManager
+from app.evaluation.benchmark_runner import BenchmarkRunner
 
 logger = get_logger("api.endpoints")
 router = APIRouter()
@@ -99,6 +105,7 @@ class VoiceTurnResponse(BaseModel):
     contradictions: List[ContradictionItem] = Field(default_factory=list)
     active_diagram: Optional[ArchitectureDiagramPayload] = None
     topic_coverage: Optional[Dict[str, Any]] = None
+    assigned_variants: Optional[Dict[str, str]] = None
     metrics: Dict[str, Any]
 
 class VADFrameRequest(BaseModel):
@@ -118,7 +125,43 @@ class SearchKnowledgeRequest(BaseModel):
     top_k: int = 2
 
 # ==========================================
-# 1. Multilingual & Language APIs (v0.14.0)
+# 1. Observability & Prometheus Metrics (v0.15.0)
+# ==========================================
+
+@router.get("/metrics")
+async def get_prometheus_metrics():
+    prom_data = MetricsExporter.generate_prometheus_metrics()
+    return Response(content=prom_data, media_type="text/plain")
+
+# ==========================================
+# 2. Voice AI A/B Experimentation APIs (v0.16.0)
+# ==========================================
+
+@router.get("/api/experiments/active", response_model=List[ExperimentConfig])
+async def list_active_experiments() -> List[ExperimentConfig]:
+    return ABExperimentManager.get_active_experiments()
+
+@router.get("/api/experiments/{experiment_id}/results", response_model=Optional[ExperimentResult])
+async def get_experiment_results(experiment_id: str) -> Optional[ExperimentResult]:
+    res = ABExperimentManager.get_experiment_results(experiment_id)
+    if not res:
+        raise HTTPException(status_code=404, detail="Experiment not found")
+    return res
+
+# ==========================================
+# 3. Evaluation Suite & Benchmark APIs (v0.17.0)
+# ==========================================
+
+@router.post("/api/evaluation/run-benchmark", response_model=BenchmarkRunSummary)
+async def run_evaluation_benchmark() -> BenchmarkRunSummary:
+    return BenchmarkRunner.run_evaluation_suite()
+
+@router.get("/api/evaluation/benchmark-results", response_model=BenchmarkRunSummary)
+async def get_benchmark_results() -> BenchmarkRunSummary:
+    return BenchmarkRunner.get_latest_results()
+
+# ==========================================
+# 4. Multilingual & Language APIs (v0.14.0)
 # ==========================================
 
 @router.post("/api/voice/detect-language", response_model=DetectLanguageResponse)
@@ -127,7 +170,7 @@ async def detect_language(req: DetectLanguageRequest) -> DetectLanguageResponse:
     return DetectLanguageResponse(detected_language=lang.value, confidence=conf)
 
 # ==========================================
-# 2. Agent Tools & Actions APIs (v0.13.0)
+# 5. Agent Tools & Actions APIs (v0.13.0)
 # ==========================================
 
 @router.get("/api/agent/tools")
@@ -146,7 +189,7 @@ async def execute_agent_tool(req: ExecuteToolRequest) -> ToolResult:
     return res
 
 # ==========================================
-# 3. Knowledge Base & RAG APIs (v0.11.0)
+# 6. Knowledge Base & RAG APIs (v0.11.0)
 # ==========================================
 
 @router.get("/api/knowledge/documents", response_model=List[KnowledgeDocument])
@@ -162,7 +205,7 @@ async def search_knowledge_base(req: SearchKnowledgeRequest) -> List[KnowledgeSe
     return rag_engine.search(query=req.query, role_target=req.role_target, top_k=req.top_k)
 
 # ==========================================
-# 4. Memory & Candidate Profile APIs (v0.12.0)
+# 7. Memory & Candidate Profile APIs (v0.12.0)
 # ==========================================
 
 @router.get("/api/interview/session/{session_id}/memory", response_model=ShortTermMemory)
@@ -179,7 +222,7 @@ async def get_candidate_profile(candidate_id: str) -> CandidateProfile:
     return CandidateProfileRepository.get_profile(candidate_id=candidate_id)
 
 # ==========================================
-# 5. Interview Configuration & Session APIs
+# 8. Interview Configuration & Session APIs
 # ==========================================
 
 @router.get("/api/interview/templates")
@@ -260,7 +303,7 @@ async def list_interview_sessions(candidate_id: Optional[str] = None, limit: int
     return await InterviewSessionRepository.list_sessions(candidate_id=candidate_id, limit=limit)
 
 # ==========================================
-# 6. System Diagnostics & Health
+# 9. System Diagnostics & Health
 # ==========================================
 
 @router.get("/health")
@@ -287,7 +330,10 @@ async def health_check() -> Dict[str, Any]:
             "knowledge_base_rag": True,
             "memory_and_cross_turn": True,
             "agent_tools": True,
-            "multilingual_hindi_hinglish": True
+            "multilingual_hindi_hinglish": True,
+            "observability_prometheus": True,
+            "ab_experimentation": True,
+            "benchmark_evaluation_suite": True
         }
     }
 
@@ -317,7 +363,7 @@ async def voice_status() -> Dict[str, Any]:
     }
 
 # ==========================================
-# 7. Voice Token & Turn Endpoints
+# 10. Voice Token & Turn Endpoints
 # ==========================================
 
 @router.post("/api/voice/token", response_model=TokenResponse)
@@ -359,6 +405,7 @@ async def process_vad_frame(req: VADFrameRequest) -> VADFrameResponse:
 
 @router.post("/api/voice/turn", response_model=VoiceTurnResponse)
 async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
+    turn_span = TurnSpan(session_id=req.session_id)
     try:
         if req.audio_base64:
             audio_bytes = base64.b64decode(req.audio_base64)
@@ -383,6 +430,7 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
         memory_callback = None
         active_diag = None
         active_lang = InterviewLanguage.ENGLISH
+        assigned_variants = None
         
         candidate_text = req.text or ""
         # Multilingual code-switching detection
@@ -391,6 +439,7 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
             active_lang = detected_lang
 
         if req.session_id:
+            assigned_variants = ABExperimentManager.assign_variants(req.session_id)
             session = await InterviewSessionRepository.get_session(req.session_id)
             if session:
                 if req.session_id not in active_state_machines:
@@ -475,6 +524,14 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
             language="hi" if active_lang in [InterviewLanguage.HINDI, InterviewLanguage.HINGLISH] else "en"
         )
 
+        turn_span.stt_latency_ms = getattr(turn_result.metrics, "stt_latency_ms", 0.0)
+        turn_span.llm_ttft_ms = getattr(turn_result.metrics, "llm_ttft_ms", getattr(turn_result.metrics, "llm_latency_ms", 150.0))
+        turn_span.llm_total_ms = getattr(turn_result.metrics, "llm_total_ms", getattr(turn_result.metrics, "llm_latency_ms", 300.0))
+        turn_span.tts_ttfa_ms = getattr(turn_result.metrics, "tts_ttfa_ms", getattr(turn_result.metrics, "tts_latency_ms", 120.0))
+        turn_span.tts_total_ms = getattr(turn_result.metrics, "tts_total_ms", getattr(turn_result.metrics, "tts_latency_ms", 250.0))
+        turn_span.language = active_lang.value
+        MetricsExporter.record_span(turn_span)
+
         if session:
             session.transcripts.append(TranscriptEntry(
                 stage=current_stage,
@@ -503,6 +560,17 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
 
             # Record long-term candidate profile
             CandidateProfileRepository.record_session_completion(session)
+
+            # Record A/B experiment metrics
+            if assigned_variants:
+                for exp_id, var_id in assigned_variants.items():
+                    ABExperimentManager.record_metric(
+                        experiment_id=exp_id,
+                        variant_id=var_id,
+                        turn_latency_ms=getattr(turn_result.metrics, "total_turn_ms", getattr(turn_result.metrics, "total_latency_ms", 300.0)),
+                        ttft_ms=getattr(turn_result.metrics, "llm_ttft_ms", getattr(turn_result.metrics, "llm_latency_ms", 150.0)),
+                        scorecard_score=session.scorecard.overall_score if session.scorecard else 3.0
+                    )
 
             await InterviewSessionRepository.update_session(session.session_id, {
                 "transcripts": [t.model_dump() for t in session.transcripts],
@@ -533,6 +601,7 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
             memory_claims_count=memory_claims_count,
             contradictions=contradictions,
             active_diagram=active_diag,
+            assigned_variants=assigned_variants,
             topic_coverage=session.topic_coverage if session else None,
             metrics=turn_result.metrics.model_dump()
         )
@@ -546,7 +615,7 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
 @router.websocket("/api/voice/stream/ws")
 async def voice_streaming_websocket(websocket: WebSocket):
     """
-    Full-duplex WebSocket endpoint for real-time streaming voice sessions with Answer, Evidence Evaluation, Knowledge RAG, Memory, Tool Calling, and Multilingual Code-Switching.
+    Full-duplex WebSocket endpoint for real-time streaming voice sessions with Answer, Evidence Evaluation, Knowledge RAG, Memory, Tool Calling, Multilingual Code-Switching, and Observability Spans.
     """
     await websocket.accept()
     logger.info("WebSocket voice stream client connected")
