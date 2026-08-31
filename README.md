@@ -1,12 +1,12 @@
 # VoiceHire
 
-### Realtime AI Technical Interviewer
+### Realtime AI Technical Interviewer — Version 1.0.0 (Production Release)
 
-VoiceHire is a production-oriented realtime Voice AI technical interviewer designed to conduct structured, adaptive technical interviews for software developers. Powered by LiveKit, FastAPI, React, and advanced LLM orchestrations, it goes beyond simple speech-to-text queries to implement natural turn-taking, barge-in detection, an adaptive question engine with depth probing, evidence-based evaluations, mid-interview Knowledge Base RAG, conversational memory, agent tool execution, multilingual English + Hindi + Hinglish support, distributed observability metrics, A/B experimentation, and automated evaluation benchmark suites.
+VoiceHire is a production-grade realtime Voice AI technical interviewer designed to conduct structured, adaptive technical interviews for software developers. Powered by LiveKit, FastAPI, React, and advanced LLM orchestrations, it implements natural turn-taking, sub-150ms barge-in interruption, adaptive question depth probing, evidence-based evaluations with verbatim quote citations, company Knowledge Base RAG, conversational memory, agent tool execution (Python sandboxing, Mermaid diagramming), multilingual English + Hindi + Hinglish support, Prometheus observability, online A/B experimentation, golden benchmark calibration, PII sanitization, and multi-room concurrent load simulation.
 
 ---
 
-## 🗺️ Version Progression
+## 🗺️ Completed Roadmap (v1.0.0)
 
 - [x] **`v0.1.0` (Project Foundation)**
 - [x] **`v0.2.0` (Basic Voice Pipeline)**
@@ -24,14 +24,14 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
 - [x] **`v0.14.0` (Multilingual support: English + Hindi + Hinglish)**
 - [x] **`v0.15.0` (Observability & Prometheus Telemetry)**
 - [x] **`v0.16.0` (Voice AI Experimentation & A/B Testing)**
-- [x] **`v0.17.0` (Evaluation Suite & Benchmark Runner)** ── *Current Release*
-- [ ] `v0.18.0` (Reliability & Security)
-- [ ] `v0.19.0` (Scale & Load Testing)
-- [ ] `v1.0.0` (Final Production Polish)
+- [x] **`v0.17.0` (Evaluation Suite & Benchmark Runner)**
+- [x] **`v0.18.0` (Reliability & Security: PII Redaction & Rate Limiting)**
+- [x] **`v0.19.0` (Scale & Multi-Room Concurrent Load Testing)**
+- [x] **`v1.0.0` (Final Production Polish & Official Release)** ── *Production Ready*
 
 ---
 
-## 🏗️ Architecture (v0.17.0)
+## 🏗️ Architecture (v1.0.0)
 
 ```
                     ┌──────────────────────────────┐
@@ -49,10 +49,11 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
                                    │
                     ┌──────────────▼───────────────┐
                     │       FastAPI Backend        │
-                    │  - GET /metrics (Prometheus) │
+                    │  - GET /health & /metrics    │
+                    │  - PII Sanitizer & Limiter   │
                     │  - /api/experiments/*        │
                     │  - /api/evaluation/*         │
-                    │  - /api/agent/tools          │
+                    │  - /api/scale/*              │
                     │  - WS /api/voice/stream/ws   │
                     └──────────────┬───────────────┘
                                    │
@@ -67,29 +68,44 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
 
 ---
 
-## ✨ Key Capabilities
-
-- **Evaluation Benchmark Suite & Scoring Calibration (`v0.17.0`)**: Pre-packaged golden candidate transcripts across SDE-1, SDE-2, Senior, and Staff levels automatically calibrated against human grading baselines, computing Mean Absolute Error (MAE < 1.0) and red flag precision/recall.
-- **Voice AI A/B Experimentation (`v0.16.0`)**: Online multi-variant A/B testing comparing LLMs (Gemini 1.5 Flash vs OpenAI GPT-4o-mini), TTS engines (Deepgram Aura vs ElevenLabs Multilingual), and chunking strategies on live turn latencies and scorecard scores.
-- **Distributed Observability & Prometheus Telemetry (`v0.15.0`)**: Granular `TurnSpan` tracking across audio ingestion, VAD endpointing, STT, LLM TTFT, tool execution, and TTS TTFA with a standard `GET /metrics` scrape endpoint and frontend waterfall latency charts.
-- **Multilingual Support (English + Hindi + Hinglish) (`v0.14.0`)**: Real-time code-switching detection and technical vocabulary preservation.
-- **Agent Tool Calling & Python Sandbox (`v0.13.0`)**: Mid-interview code execution and automated Mermaid architecture diagram generation.
-- **Conversational Memory & Contradiction Detection (`v0.12.0`)**: Cross-turn continuity callbacks and candidate profile tracking.
-- **Knowledge Base RAG (`v0.11.0`)**: Verification against company engineering standards.
-- **Evidence-Based Evaluation (`v0.10.0`)**: Verbatim quote citations and technical red flag audits.
-
----
-
 ## 🛠️ Technology Stack
 
-- **Backend**: FastAPI, Python 3.11/3.13, LiveKit API, WebSockets, Pytest, Motor / PyMongo
+- **Backend**: FastAPI, Python 3.11/3.13, LiveKit API, WebSockets, Pytest, Motor / PyMongo, NumPy
 - **Frontend**: React, Vite, TypeScript, Vanilla HSL CSS
 - **Voice Providers**: Deepgram (STT/TTS), OpenAI & Gemini (LLM), ElevenLabs (TTS)
 - **Database**: MongoDB Atlas
 
 ---
 
-## 📝 Technical Decisions & Version Docs
+## 🚀 Setup & Local Execution
+
+### 1. Start Backend:
+```bash
+cd backend
+python -m venv .venv
+# On Windows PowerShell: .venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python -m uvicorn app.main:app --reload --port 8000
+```
+Backend API will run at [http://localhost:8000](http://localhost:8000).
+
+### 2. Start Frontend:
+```bash
+cd frontend
+npm install
+npm run dev
+```
+Frontend will run at [http://localhost:5173](http://localhost:5173).
+
+### 3. Run Test Suite:
+```bash
+cd backend
+pytest tests
+```
+
+---
+
+## 📝 Architecture Decisions (ADRs)
 
 - [ADR-001: Project Foundation Stack & Architecture](docs/decisions/ADR-001-project-foundation.md)
 - [ADR-002: Modular Voice Provider Abstractions & LiveKit Pipeline](docs/decisions/ADR-002-voice-pipeline.md)
@@ -108,3 +124,6 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
 - [ADR-015: Observability, Distributed Turn Spans & Prometheus Metrics](docs/decisions/ADR-015-observability-telemetry.md)
 - [ADR-016: Voice AI A/B Experimentation & Multi-Variant Evaluation](docs/decisions/ADR-016-ab-experimentation.md)
 - [ADR-017: Golden Standard Evaluation Benchmark Suite & Scoring Calibration](docs/decisions/ADR-017-evaluation-benchmark-suite.md)
+- [ADR-018: Reliability, PII Redaction & Sliding-Window Rate Limiting](docs/decisions/ADR-018-reliability-and-security.md)
+- [ADR-019: Multi-Room Concurrent Load Simulation & Latency Distribution](docs/decisions/ADR-019-scale-and-load-testing.md)
+- [ADR-020: VoiceHire v1.0.0 Production Release & System Integration](docs/decisions/ADR-020-production-release-v1.md)

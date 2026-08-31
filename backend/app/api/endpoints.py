@@ -2,7 +2,7 @@ import base64
 import json
 import time
 from typing import Dict, Any, Optional, List
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, status, Response
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, status, Response, Request
 from pydantic import BaseModel, Field
 
 from app.config import settings
@@ -29,6 +29,7 @@ from app.models.tools import (
 )
 from app.models.experiments import ExperimentConfig, ExperimentResult
 from app.models.benchmark import BenchmarkRunSummary
+from app.models.scale import LoadTestConfig, LoadTestResult
 from app.db.mongo import InterviewSessionRepository
 from app.interview.prompt_builder import InterviewPromptBuilder
 from app.interview.state_machine import InterviewStateMachine, STAGE_SEQUENCE, STAGE_DISPLAY_NAMES
@@ -41,6 +42,8 @@ from app.agent.tools.executor import AgentToolExecutor
 from app.observability.telemetry import TurnSpan, MetricsExporter
 from app.experiments.ab_engine import ABExperimentManager
 from app.evaluation.benchmark_runner import BenchmarkRunner
+from app.security.sanitizer import PIISanitizer, SlidingWindowRateLimiter
+from app.scale.load_runner import ConcurrentLoadSimulator
 
 logger = get_logger("api.endpoints")
 router = APIRouter()
@@ -125,7 +128,19 @@ class SearchKnowledgeRequest(BaseModel):
     top_k: int = 2
 
 # ==========================================
-# 1. Observability & Prometheus Metrics (v0.15.0)
+# 1. Scale & Concurrent Load APIs (v0.19.0)
+# ==========================================
+
+@router.post("/api/scale/run-load-test", response_model=LoadTestResult)
+async def run_load_test(config: LoadTestConfig) -> LoadTestResult:
+    return await ConcurrentLoadSimulator.run_load_test(config)
+
+@router.get("/api/scale/load-test-results", response_model=LoadTestResult)
+async def get_load_test_results() -> LoadTestResult:
+    return ConcurrentLoadSimulator.get_latest_results()
+
+# ==========================================
+# 2. Observability & Prometheus Metrics (v0.15.0)
 # ==========================================
 
 @router.get("/metrics")
@@ -134,7 +149,7 @@ async def get_prometheus_metrics():
     return Response(content=prom_data, media_type="text/plain")
 
 # ==========================================
-# 2. Voice AI A/B Experimentation APIs (v0.16.0)
+# 3. Voice AI A/B Experimentation APIs (v0.16.0)
 # ==========================================
 
 @router.get("/api/experiments/active", response_model=List[ExperimentConfig])
@@ -149,7 +164,7 @@ async def get_experiment_results(experiment_id: str) -> Optional[ExperimentResul
     return res
 
 # ==========================================
-# 3. Evaluation Suite & Benchmark APIs (v0.17.0)
+# 4. Evaluation Suite & Benchmark APIs (v0.17.0)
 # ==========================================
 
 @router.post("/api/evaluation/run-benchmark", response_model=BenchmarkRunSummary)
@@ -161,7 +176,7 @@ async def get_benchmark_results() -> BenchmarkRunSummary:
     return BenchmarkRunner.get_latest_results()
 
 # ==========================================
-# 4. Multilingual & Language APIs (v0.14.0)
+# 5. Multilingual & Language APIs (v0.14.0)
 # ==========================================
 
 @router.post("/api/voice/detect-language", response_model=DetectLanguageResponse)
@@ -170,7 +185,7 @@ async def detect_language(req: DetectLanguageRequest) -> DetectLanguageResponse:
     return DetectLanguageResponse(detected_language=lang.value, confidence=conf)
 
 # ==========================================
-# 5. Agent Tools & Actions APIs (v0.13.0)
+# 6. Agent Tools & Actions APIs (v0.13.0)
 # ==========================================
 
 @router.get("/api/agent/tools")
@@ -189,7 +204,7 @@ async def execute_agent_tool(req: ExecuteToolRequest) -> ToolResult:
     return res
 
 # ==========================================
-# 6. Knowledge Base & RAG APIs (v0.11.0)
+# 7. Knowledge Base & RAG APIs (v0.11.0)
 # ==========================================
 
 @router.get("/api/knowledge/documents", response_model=List[KnowledgeDocument])
@@ -205,7 +220,7 @@ async def search_knowledge_base(req: SearchKnowledgeRequest) -> List[KnowledgeSe
     return rag_engine.search(query=req.query, role_target=req.role_target, top_k=req.top_k)
 
 # ==========================================
-# 7. Memory & Candidate Profile APIs (v0.12.0)
+# 8. Memory & Candidate Profile APIs (v0.12.0)
 # ==========================================
 
 @router.get("/api/interview/session/{session_id}/memory", response_model=ShortTermMemory)
@@ -222,7 +237,7 @@ async def get_candidate_profile(candidate_id: str) -> CandidateProfile:
     return CandidateProfileRepository.get_profile(candidate_id=candidate_id)
 
 # ==========================================
-# 8. Interview Configuration & Session APIs
+# 9. Interview Configuration & Session APIs
 # ==========================================
 
 @router.get("/api/interview/templates")
@@ -303,7 +318,7 @@ async def list_interview_sessions(candidate_id: Optional[str] = None, limit: int
     return await InterviewSessionRepository.list_sessions(candidate_id=candidate_id, limit=limit)
 
 # ==========================================
-# 9. System Diagnostics & Health
+# 10. System Diagnostics & Health (v1.0.0 Production Readiness)
 # ==========================================
 
 @router.get("/health")
@@ -313,6 +328,7 @@ async def health_check() -> Dict[str, Any]:
         "project": settings.PROJECT_NAME,
         "environment": settings.ENV,
         "version": settings.VERSION,
+        "production_ready": True,
         "providers": {
             "stt": settings.STT_PROVIDER,
             "llm": settings.LLM_PROVIDER,
@@ -333,7 +349,10 @@ async def health_check() -> Dict[str, Any]:
             "multilingual_hindi_hinglish": True,
             "observability_prometheus": True,
             "ab_experimentation": True,
-            "benchmark_evaluation_suite": True
+            "benchmark_evaluation_suite": True,
+            "reliability_security": True,
+            "scale_load_simulation": True,
+            "production_polish": True
         }
     }
 
@@ -363,11 +382,15 @@ async def voice_status() -> Dict[str, Any]:
     }
 
 # ==========================================
-# 10. Voice Token & Turn Endpoints
+# 11. Voice Token & Turn Endpoints
 # ==========================================
 
 @router.post("/api/voice/token", response_model=TokenResponse)
 async def get_voice_token(req: TokenRequest) -> TokenResponse:
+    # Sliding window rate limiting
+    if not SlidingWindowRateLimiter.is_allowed(req.identity, max_requests=100, window_seconds=60.0):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait a moment.")
+
     try:
         token = generate_livekit_token(
             room_name=req.room_name,
@@ -415,7 +438,8 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
         history_msgs = []
         if req.history:
             for item in req.history:
-                history_msgs.append(LLMMessage(role=item.get("role", "user"), content=item.get("content", "")))
+                sanitized_content = PIISanitizer.sanitize(item.get("content", ""))
+                history_msgs.append(LLMMessage(role=item.get("role", "user"), content=sanitized_content))
 
         system_prompt = None
         session = None
@@ -432,7 +456,9 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
         active_lang = InterviewLanguage.ENGLISH
         assigned_variants = None
         
-        candidate_text = req.text or ""
+        # PII Sanitization
+        candidate_text = PIISanitizer.sanitize(req.text or "")
+        
         # Multilingual code-switching detection
         if candidate_text:
             detected_lang, _ = LanguageDetector.detect_language(candidate_text)
@@ -533,10 +559,11 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
         MetricsExporter.record_span(turn_span)
 
         if session:
+            sanitized_transcript = PIISanitizer.sanitize(turn_result.transcript)
             session.transcripts.append(TranscriptEntry(
                 stage=current_stage,
                 role="candidate", 
-                text=turn_result.transcript,
+                text=sanitized_transcript,
                 evaluated_depth=adaptive_action.evaluated_depth.value if adaptive_action else None,
                 adaptive_strategy=adaptive_action.strategy.value if adaptive_action else None,
                 evaluation=turn_eval
@@ -615,7 +642,7 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
 @router.websocket("/api/voice/stream/ws")
 async def voice_streaming_websocket(websocket: WebSocket):
     """
-    Full-duplex WebSocket endpoint for real-time streaming voice sessions with Answer, Evidence Evaluation, Knowledge RAG, Memory, Tool Calling, Multilingual Code-Switching, and Observability Spans.
+    Full-duplex WebSocket endpoint for real-time streaming voice sessions with Answer, Evidence Evaluation, Knowledge RAG, Memory, Tool Calling, Multilingual Code-Switching, PII Redaction, and Observability Spans.
     """
     await websocket.accept()
     logger.info("WebSocket voice stream client connected")
@@ -651,7 +678,7 @@ async def voice_streaming_websocket(websocket: WebSocket):
             memory_callback = None
             active_lang = InterviewLanguage.ENGLISH
 
-            candidate_text = text or ""
+            candidate_text = PIISanitizer.sanitize(text or "")
             if candidate_text:
                 detected_lang, _ = LanguageDetector.detect_language(candidate_text)
                 active_lang = detected_lang
@@ -769,7 +796,7 @@ async def voice_streaming_websocket(websocket: WebSocket):
                     )
 
             history_msgs = [
-                LLMMessage(role=m.get("role", "user"), content=m.get("content", ""))
+                LLMMessage(role=m.get("role", "user"), content=PIISanitizer.sanitize(m.get("content", "")))
                 for m in history
             ]
             
