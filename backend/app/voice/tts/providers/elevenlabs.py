@@ -6,7 +6,7 @@ class ElevenLabsTTSProvider(BaseTTSProvider):
     """
     ElevenLabs Text-to-Speech Provider.
     """
-    def __init__(self, api_key: str, default_voice_id: str = "21m00Tcm4TlvDq8ikWAM", model_id: str = "eleven_turbo_v2_5"):
+    def __init__(self, api_key: str, default_voice_id: str = "CwhRBWXzGAHq8TQ4Fs17", model_id: str = "eleven_turbo_v2_5"):
         if not api_key:
             raise ValueError("ElevenLabs API Key is required for ElevenLabsTTSProvider")
         self.api_key = api_key
