@@ -1,6 +1,7 @@
 import base64
+import json
 from typing import Dict, Any, Optional, List
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel, Field
 
 from app.config import settings
@@ -8,13 +9,15 @@ from app.core.logger import get_logger
 from app.agent.worker import generate_livekit_token
 from app.voice.factory import VoiceProviderFactory
 from app.voice.pipeline import BasicVoicePipeline, PipelineTurnResult
+from app.voice.streaming_pipeline import StreamingVoicePipeline, StreamAudioEvent
 from app.voice.llm.base import LLMMessage
 
 logger = get_logger("api.endpoints")
 router = APIRouter()
 
-# Global pipeline instance for API requests
+# Global pipeline instances
 voice_pipeline = BasicVoicePipeline()
+streaming_pipeline = StreamingVoicePipeline()
 
 class TokenRequest(BaseModel):
     room_name: str = Field(..., description="Unique LiveKit room name")
@@ -60,7 +63,7 @@ async def health_check() -> Dict[str, Any]:
 @router.get("/api/voice/status")
 async def voice_status() -> Dict[str, Any]:
     """
-    Returns the configured voice providers and LiveKit connection status.
+    Returns the configured voice providers, LiveKit status, and streaming capabilities.
     """
     return {
         "livekit_url": settings.LIVEKIT_URL,
@@ -69,6 +72,7 @@ async def voice_status() -> Dict[str, Any]:
             "llm": settings.LLM_PROVIDER,
             "tts": settings.TTS_PROVIDER
         },
+        "streaming_supported": True,
         "version": settings.VERSION
     }
 
@@ -99,23 +103,19 @@ async def get_voice_token(req: TokenRequest) -> TokenResponse:
 @router.post("/api/voice/turn", response_model=VoiceTurnResponse)
 async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
     """
-    Process a single voice turn (Audio In -> STT -> LLM -> TTS -> Audio Out) with latency diagnostics.
+    Process a single voice turn with roundtrip latency diagnostics.
     """
     try:
-        # Decode audio or create placeholder bytes
         if req.audio_base64:
             audio_bytes = base64.b64decode(req.audio_base64)
         else:
-            # Generate empty audio bytes for text simulation
             audio_bytes = b"\x00" * 3200
 
-        # Build message history
         history_msgs = []
         if req.history:
             for item in req.history:
                 history_msgs.append(LLMMessage(role=item.get("role", "user"), content=item.get("content", "")))
 
-        # Override mock STT if text was explicitly sent in test mode
         if req.text and isinstance(voice_pipeline.stt, type(VoiceProviderFactory.get_stt_provider("mock"))):
             voice_pipeline.stt.default_response = req.text
 
@@ -138,3 +138,56 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Turn processing failed: {str(e)}"
         )
+
+@router.websocket("/api/voice/stream/ws")
+async def voice_streaming_websocket(websocket: WebSocket):
+    """
+    Full-duplex WebSocket endpoint for real-time streaming voice sessions.
+    Clients send text or audio events; server streams tokens, audio chunks, and latency metrics.
+    """
+    await websocket.accept()
+    logger.info("WebSocket voice stream client connected")
+    
+    try:
+        while True:
+            raw_msg = await websocket.receive_text()
+            data = json.loads(raw_msg)
+            
+            action = data.get("action", "turn")
+            text = data.get("text")
+            audio_b64 = data.get("audio_base64")
+            history = data.get("history", [])
+            
+            history_msgs = [
+                LLMMessage(role=m.get("role", "user"), content=m.get("content", ""))
+                for m in history
+            ]
+            
+            raw_audio = base64.b64decode(audio_b64) if audio_b64 else None
+            
+            # Execute streaming turn
+            async for event in streaming_pipeline.stream_turn(
+                input_text=text,
+                raw_audio=raw_audio,
+                history=history_msgs
+            ):
+                payload = {
+                    "event_type": event.event_type,
+                    "text": event.text,
+                    "audio_format": event.audio_format
+                }
+                if event.audio_bytes:
+                    payload["audio_chunk_b64"] = base64.b64encode(event.audio_bytes).decode("utf-8")
+                if event.metrics:
+                    payload["metrics"] = event.metrics.model_dump()
+                    
+                await websocket.send_json(payload)
+                
+    except WebSocketDisconnect:
+        logger.info("WebSocket voice stream client disconnected")
+    except Exception as e:
+        logger.error("WebSocket stream error", extra={"error": str(e)})
+        try:
+            await websocket.send_json({"event_type": "error", "message": str(e)})
+        except Exception:
+            pass

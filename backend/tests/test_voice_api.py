@@ -1,6 +1,7 @@
 import pytest
 from httpx import AsyncClient, ASGITransport
 from app.main import app
+from app.config import settings
 
 @pytest.mark.asyncio
 async def test_health_check_endpoint():
@@ -10,7 +11,7 @@ async def test_health_check_endpoint():
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "healthy"
-        assert data["version"] == "0.2.0"
+        assert data["version"] == settings.VERSION
         assert "providers" in data
 
 @pytest.mark.asyncio
@@ -22,6 +23,7 @@ async def test_voice_status_endpoint():
         data = response.json()
         assert "livekit_url" in data
         assert "providers" in data
+        assert data.get("streaming_supported") is True
 
 @pytest.mark.asyncio
 async def test_livekit_token_generation():

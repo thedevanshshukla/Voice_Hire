@@ -71,19 +71,19 @@ function App() {
         ) : (
           <>
             <section className="hero-section">
-              <div className="badge">Phase 1 Active • Basic Voice Pipeline (v0.2.0)</div>
+              <div className="badge">Phase 2 Active • Realtime / Streaming (v0.3.0)</div>
               <h1 className="hero-title">
                 Realtime Voice AI<br />Technical Interviewer
               </h1>
               <p className="hero-subtitle">
-                VoiceHire conducts adaptive technical interviews, challenging software developers with 
-                conversational depth, natural interruptions, and objective evidence-based evaluations.
+                VoiceHire conducts ultra low-latency adaptive technical interviews, challenging software developers with 
+                continuous token streaming, early TTS sentence chunking, and live latency telemetry.
               </p>
 
               <div className="btn-container">
                 <button className="btn btn-primary" onClick={() => setIsVoiceRoomOpen(true)}>
-                  <span>Launch Voice Interview</span>
-                  <span>🎙️</span>
+                  <span>Launch Streaming Interview</span>
+                  <span>⚡</span>
                 </button>
                 <a 
                   href="https://livekit.io" 
@@ -101,6 +101,7 @@ function App() {
                   <span className="provider-tag">STT: <strong>{backendHealth.providers.stt}</strong></span>
                   <span className="provider-tag">LLM: <strong>{backendHealth.providers.llm}</strong></span>
                   <span className="provider-tag">TTS: <strong>{backendHealth.providers.tts}</strong></span>
+                  <span className="provider-tag" style={{ color: 'var(--accent-green)' }}>⚡ Streaming: <strong>Active</strong></span>
                 </div>
               )}
             </section>
@@ -108,26 +109,26 @@ function App() {
             {/* Feature Highlights / Roadmap */}
             <section className="features-grid">
               <div className="feature-card">
-                <div className="feature-icon">🎙️</div>
-                <h3 className="feature-title">Voice Pipeline (v0.2.0)</h3>
-                <p className="feature-desc">
-                  Fast WebRTC audio connection and provider abstractions for STT, LLM, and TTS with round-trip latency tracking.
-                </p>
-              </div>
-
-              <div className="feature-card">
                 <div className="feature-icon">⚡</div>
-                <h3 className="feature-title">Natural Turn Taking</h3>
+                <h3 className="feature-title">Streaming Pipeline (v0.3.0)</h3>
                 <p className="feature-desc">
-                  Distinguishes between a natural candidate pause and completion of an answer using VAD and Turn Detection.
+                  Sub-second conversational response: LLM tokens are buffered at clause boundaries and piped concurrently to streaming TTS.
                 </p>
               </div>
 
               <div className="feature-card">
-                <div className="feature-icon">🛑</div>
-                <h3 className="feature-title">Barge-in Support</h3>
+                <div className="feature-icon">📊</div>
+                <h3 className="feature-title">TTFT & TTFA Telemetry</h3>
                 <p className="feature-desc">
-                  Interrupter agent stops speaking immediately upon candidate barge-in, cancelling active audio tracks seamlessly.
+                  Real-time telemetry tracking Time-to-First-Token, Time-to-First-Audio, and perceived conversational latency.
+                </p>
+              </div>
+
+              <div className="feature-card">
+                <div className="feature-icon">🎙️</div>
+                <h3 className="feature-title">LiveKit WebRTC</h3>
+                <p className="feature-desc">
+                  Seamless WebRTC audio transport with JWT token authentication and bi-directional media streams.
                 </p>
               </div>
             </section>

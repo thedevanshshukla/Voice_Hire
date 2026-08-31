@@ -4,7 +4,7 @@ from pydantic import Field
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "VoiceHire"
-    VERSION: str = "0.2.0"
+    VERSION: str = "0.3.0"
     ENV: str = "development"
     LOG_LEVEL: str = "INFO"
     LOG_JSON: bool = False
@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     LLM_PROVIDER: str = Field(default="mock", description="Default LLM provider: mock, openai, gemini")
     TTS_PROVIDER: str = Field(default="mock", description="Default TTS provider: mock, elevenlabs, deepgram")
     
-    # API Keys for Cloud Providers (Optional in dev/mock)
+    # API Keys for Cloud Providers
     OPENAI_API_KEY: Optional[str] = None
     GEMINI_API_KEY: Optional[str] = None
     DEEPGRAM_API_KEY: Optional[str] = None

@@ -9,8 +9,8 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
 ## 🗺️ Version Progression
 
 - [x] **`v0.1.0` (Project Foundation)**
-- [x] **`v0.2.0` (Basic Voice Pipeline)** ── *Current Release*
-- [ ] `v0.3.0` (Realtime / Streaming)
+- [x] **`v0.2.0` (Basic Voice Pipeline)**
+- [x] **`v0.3.0` (Realtime / Streaming)** ── *Current Release*
 - [ ] `v0.4.0` (Natural Turn Taking)
 - [ ] `v0.5.0` (Interruption & Barge-In)
 - [ ] `v0.6.0` (Interview Foundation)
@@ -31,52 +31,50 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
 
 ---
 
-## 🏗️ Architecture (v0.2.0)
+## 🏗️ Architecture (v0.3.0)
 
 ```
                     ┌──────────────────────────────┐
                     │      Candidate Browser       │
                     │   React / Vite / TypeScript  │
-                    │  - VoiceRoom & Visualizer    │
-                    │  - Realtime Transcript Feed  │
+                    │  - Realtime Token Stream     │
+                    │  - Latency HUD (TTFT / TTFA) │
                     └──────────────┬───────────────┘
                                    │
-                                WebRTC / REST
+                      WebSocket / REST / WebRTC
                                    │
                     ┌──────────────▼───────────────┐
                     │       FastAPI Backend        │
-                    │  - /api/voice/token (JWT)    │
-                    │  - /api/voice/turn (Pipeline)│
+                    │  - WS /api/voice/stream/ws   │
+                    │  - /api/voice/token & /turn  │
                     │  - /health & /voice/status   │
                     └──────────────┬───────────────┘
                                    │
-            ┌──────────────────────┼──────────────────────┐
-            ▼                      ▼                      ▼
-     ┌─────────────┐        ┌─────────────┐        ┌─────────────┐
-     │ STT Provider│        │ LLM Provider│        │ TTS Provider│
-     │ Deepgram    │        │ OpenAI      │        │ ElevenLabs  │
-     │ Mock Local  │        │ Gemini/Mock │        │ Deepgram/Mck│
-     └─────────────┘        └─────────────┘        └─────────────┘
+            ┌──────────────────────┴──────────────────────┐
+            │         Streaming Voice Pipeline            │
+            │  STT -> LLM Token Stream -> Sentence Chunker│
+            │           -> Streaming TTS Audio            │
+            └─────────────────────────────────────────────┘
 ```
 
 ---
 
-## ✨ Features (v0.2.0)
+## ✨ Features (v0.3.0)
 
-- **Modular Voice Provider Abstractions**: Clean abstract interfaces and factory for STT (`Deepgram`, `Mock`), LLM (`OpenAI`, `Gemini`, `Mock`), and TTS (`ElevenLabs`, `Deepgram`, `Mock`).
-- **LiveKit Session Token Generation**: Secure participant JWT authentication with room video grants.
-- **Turn Orchestration & Latency Telemetry**: Per-turn diagnostics measuring STT latency, LLM latency, TTS latency, and total perceived roundtrip time.
-- **Interactive Voice Room UI**: Full-featured React interview room with live audio visualizer, mic control, candidate/agent message stream, and audio playback.
-- **Automated Test Suite**: 9 unit and integration tests verifying all provider abstractions, pipeline execution, and API endpoints.
+- **Continuous Streaming Voice Pipeline**: Synthesizes early sentence clauses concurrently with ongoing LLM generation to achieve conversational responsiveness.
+- **Precision Latency Telemetry**: Dedicated tracking for Time-to-First-Token (TTFT), Time-to-First-Audio (TTFA), STT latency, and total perceived turnaround.
+- **Full-Duplex WebSocket Endpoint**: `/api/voice/stream/ws` for bidirectional token, audio chunk, and event streaming.
+- **Live Latency HUD & Typewriter UI**: Real-time metrics display and typewriter animation on conversation transcripts.
+- **Multi-Cloud Verified**: Verified with Deepgram Nova-2 STT / Aura TTS, OpenAI GPT-4o, Google Gemini, and ElevenLabs.
 
 ---
 
 ## 🛠️ Technology Stack
 
-- **Backend**: FastAPI, Python 3.11/3.13, LiveKit API, Pydantic v2, Pytest
+- **Backend**: FastAPI, Python 3.11/3.13, LiveKit API, WebSockets, Pytest, Motor / PyMongo
 - **Frontend**: React, Vite, TypeScript, Vanilla HSL CSS
 - **Voice Providers**: Deepgram (STT/TTS), OpenAI & Gemini (LLM), ElevenLabs (TTS)
-- **Orchestration**: Docker, Docker Compose, Nginx
+- **Database**: MongoDB Atlas
 
 ---
 
@@ -112,5 +110,7 @@ pytest tests
 
 - [ADR-001: Project Foundation Stack & Architecture](docs/decisions/ADR-001-project-foundation.md)
 - [ADR-002: Modular Voice Provider Abstractions & LiveKit Pipeline](docs/decisions/ADR-002-voice-pipeline.md)
+- [ADR-003: Realtime Streaming Pipeline & Clause-Boundary Chunking](docs/decisions/ADR-003-streaming.md)
 - [Version 0.1.0 Release Notes](docs/versions/v0.1.md)
 - [Version 0.2.0 Release Notes](docs/versions/v0.2.md)
+- [Version 0.3.0 Release Notes](docs/versions/v0.3.md)
