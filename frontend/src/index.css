@@ -1100,6 +1100,205 @@ body {
   animation: fade-in-up 0.2s ease-out;
 }
 
+/* Turn Score Pill in HUD */
+.turn-score-pill {
+  font-family: var(--font-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(234, 179, 8, 0.6);
+  background: rgba(234, 179, 8, 0.15);
+  color: #fef08a;
+  box-shadow: 0 0 10px rgba(234, 179, 8, 0.2);
+  animation: fade-in-up 0.2s ease-out;
+}
+
+.bubble-score-tag {
+  background: rgba(234, 179, 8, 0.15);
+  border: 1px solid rgba(234, 179, 8, 0.4);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  color: #fef08a;
+  font-family: var(--font-secondary);
+  font-weight: 700;
+}
+
+.btn-scorecard-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 6px 14px;
+}
+
+.scorecard-tag {
+  background: var(--accent-purple);
+  color: white;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: bold;
+}
+
+/* Scorecard Modal */
+.scorecard-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fade-in-up 0.2s ease-out;
+}
+
+.scorecard-modal {
+  background: #111422;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  width: 90%;
+  max-width: 640px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: var(--shadow-glass);
+  padding: 24px;
+}
+
+.scorecard-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 20px;
+}
+
+.scorecard-modal-header h3 {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+
+.scorecard-hero {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  background: rgba(124, 58, 237, 0.1);
+  border: 1px solid rgba(124, 58, 237, 0.3);
+  border-radius: 14px;
+  padding: 18px 24px;
+  margin-bottom: 24px;
+}
+
+.hero-score-val {
+  font-size: 38px;
+  font-weight: 800;
+  color: #ddd6fe;
+  font-family: monospace;
+}
+
+.verdict-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.verdict-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.dimensions-breakdown h4 {
+  font-size: 14px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  letter-spacing: 0.5px;
+  margin-bottom: 14px;
+}
+
+.dim-row {
+  margin-bottom: 12px;
+}
+
+.dim-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+  font-family: var(--font-secondary);
+}
+
+.dim-val {
+  font-family: monospace;
+  color: var(--text-secondary);
+}
+
+.dim-bar-bg {
+  height: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.dim-bar-fill {
+  height: 100%;
+  background: var(--accent-blue);
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+
+.scorecard-notes-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.notes-box {
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 12px;
+  padding: 14px;
+  border: 1px solid var(--border-color);
+}
+
+.notes-box.strengths {
+  border-color: rgba(34, 197, 94, 0.3);
+}
+
+.notes-box.gaps {
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.notes-box h5 {
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 10px;
+  color: var(--text-primary);
+}
+
+.notes-box ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-family: var(--font-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.notes-box ul li {
+  line-height: 1.4;
+}
+
 /* ==========================================
    Interview Setup Wizard Styles (v0.6.0)
 ========================================== */

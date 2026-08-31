@@ -39,6 +39,30 @@ class InterviewStage(str, Enum):
     CANDIDATE_QUESTIONS = "candidate_questions"
     WRAP_UP = "wrap_up"
 
+class TurnEvaluation(BaseModel):
+    overall_score: float = Field(..., ge=1.0, le=5.0, description="Overall weighted turn score (1-5)")
+    correctness: float = Field(default=3.0, ge=1.0, le=5.0, description="Technical accuracy and correctness")
+    depth_and_mechanics: float = Field(default=3.0, ge=1.0, le=5.0, description="Depth of underlying mechanisms")
+    communication_clarity: float = Field(default=3.0, ge=1.0, le=5.0, description="Clarity and structured thought")
+    tradeoff_awareness: float = Field(default=3.0, ge=1.0, le=5.0, description="Explicit trade-off reasoning")
+    practical_vs_theory: float = Field(default=3.0, ge=1.0, le=5.0, description="Real-world production experience vs theory")
+    strengths: List[str] = Field(default_factory=list)
+    gaps: List[str] = Field(default_factory=list)
+    feedback: str = ""
+
+class SessionScorecard(BaseModel):
+    overall_score: float = Field(default=0.0, description="Average composite score across all evaluated turns")
+    avg_correctness: float = 0.0
+    avg_depth: float = 0.0
+    avg_clarity: float = 0.0
+    avg_tradeoffs: float = 0.0
+    avg_practical: float = 0.0
+    total_evaluated_turns: int = 0
+    passed_recommendation: bool = False
+    summary_verdict: str = "Evaluation pending"
+    top_strengths: List[str] = Field(default_factory=list)
+    areas_for_improvement: List[str] = Field(default_factory=list)
+
 class InterviewConfig(BaseModel):
     role: InterviewRole = InterviewRole.BACKEND
     experience_level: ExperienceLevel = ExperienceLevel.MID
@@ -57,6 +81,7 @@ class TranscriptEntry(BaseModel):
     text: str
     evaluated_depth: Optional[str] = Field(None, description="Evaluated depth of candidate response")
     adaptive_strategy: Optional[str] = Field(None, description="Applied adaptive questioning strategy")
+    evaluation: Optional[TurnEvaluation] = Field(None, description="Detailed multi-dimensional turn evaluation")
     timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     metrics: Optional[Dict[str, Any]] = None
     was_interrupted: bool = False
@@ -83,6 +108,7 @@ class InterviewSession(BaseModel):
         "wrap_up": 0
     })
     topic_coverage: Dict[str, Dict[str, Any]] = Field(default_factory=dict, description="Questions asked & depth scores per topic")
+    scorecard: Optional[SessionScorecard] = Field(default_factory=SessionScorecard, description="Cumulative multi-dimensional scorecard")
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     started_at: Optional[str] = None
     completed_at: Optional[str] = None

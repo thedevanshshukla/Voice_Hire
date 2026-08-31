@@ -16,12 +16,14 @@ from app.voice.interruption.barge_in import BargeInDetector
 from app.voice.llm.base import LLMMessage
 from app.models.interview import (
     InterviewSession, InterviewConfig, InterviewRole, ExperienceLevel,
-    InterviewLanguage, InterviewTopic, InterviewStage, TranscriptEntry, SessionStatus
+    InterviewLanguage, InterviewTopic, InterviewStage, TranscriptEntry,
+    SessionStatus, TurnEvaluation, SessionScorecard
 )
 from app.db.mongo import InterviewSessionRepository
 from app.interview.prompt_builder import InterviewPromptBuilder
 from app.interview.state_machine import InterviewStateMachine, STAGE_SEQUENCE, STAGE_DISPLAY_NAMES
 from app.interview.adaptive_engine import AdaptiveQuestionEngine, AdaptiveAction
+from app.interview.evaluation_engine import AnswerEvaluator
 
 logger = get_logger("api.endpoints")
 router = APIRouter()
@@ -66,6 +68,8 @@ class VoiceTurnResponse(BaseModel):
     progress_pct: float
     adaptive_strategy: Optional[str] = None
     evaluated_depth: Optional[str] = None
+    turn_evaluation: Optional[TurnEvaluation] = None
+    scorecard: Optional[SessionScorecard] = None
     topic_coverage: Optional[Dict[str, Any]] = None
     metrics: Dict[str, Any]
 
@@ -125,6 +129,13 @@ async def get_interview_session(session_id: str) -> InterviewSession:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
     return session
 
+@router.get("/api/interview/session/{session_id}/scorecard", response_model=SessionScorecard)
+async def get_session_scorecard(session_id: str) -> SessionScorecard:
+    session = await InterviewSessionRepository.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    return session.scorecard or SessionScorecard()
+
 @router.get("/api/interview/sessions", response_model=List[InterviewSession])
 async def list_interview_sessions(candidate_id: Optional[str] = None, limit: int = 20) -> List[InterviewSession]:
     return await InterviewSessionRepository.list_sessions(candidate_id=candidate_id, limit=limit)
@@ -151,7 +162,8 @@ async def health_check() -> Dict[str, Any]:
             "barge_in": settings.BARGE_IN_ENABLED,
             "interview_foundation": True,
             "interview_state_machine": True,
-            "adaptive_question_engine": True
+            "adaptive_question_engine": True,
+            "answer_evaluation": True
         }
     }
 
@@ -238,6 +250,7 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
         current_stage = InterviewStage.GREETING
         progress_pct = 16.6
         adaptive_action = None
+        turn_eval = None
         
         if req.session_id:
             session = await InterviewSessionRepository.get_session(req.session_id)
@@ -253,7 +266,6 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
                 sm = active_state_machines[req.session_id]
                 ae = active_adaptive_engines[req.session_id]
                 
-                # Advance state machine and adaptive engine
                 candidate_text = req.text or ""
                 trans_res = sm.step_turn(last_candidate_reply=candidate_text)
                 current_stage = trans_res.current_stage
@@ -263,6 +275,12 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
                     adaptive_action = ae.analyze_turn_and_plan(
                         last_candidate_reply=candidate_text,
                         current_stage=current_stage
+                    )
+                    # Evaluate turn across 5 dimensions
+                    turn_eval = AnswerEvaluator.evaluate_turn(
+                        candidate_reply=candidate_text,
+                        topic=ae.get_active_topic(),
+                        stage=current_stage
                     )
                 
                 system_prompt = InterviewPromptBuilder.build_system_prompt(
@@ -288,7 +306,8 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
                 role="candidate", 
                 text=turn_result.transcript,
                 evaluated_depth=adaptive_action.evaluated_depth.value if adaptive_action else None,
-                adaptive_strategy=adaptive_action.strategy.value if adaptive_action else None
+                adaptive_strategy=adaptive_action.strategy.value if adaptive_action else None,
+                evaluation=turn_eval
             ))
             session.transcripts.append(TranscriptEntry(
                 stage=current_stage,
@@ -301,12 +320,17 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
             session.stage_turn_counts = sm.stage_turn_counts
             session.topic_coverage = ae.topic_stats if 'ae' in locals() else {}
 
+            # Aggregate cumulative scorecard
+            all_evals = [t.evaluation for t in session.transcripts if t.evaluation is not None]
+            session.scorecard = AnswerEvaluator.aggregate_scorecard(all_evals)
+
             await InterviewSessionRepository.update_session(session.session_id, {
                 "transcripts": [t.model_dump() for t in session.transcripts],
                 "turn_count": session.turn_count,
                 "current_stage": session.current_stage.value,
                 "stage_turn_counts": session.stage_turn_counts,
-                "topic_coverage": session.topic_coverage
+                "topic_coverage": session.topic_coverage,
+                "scorecard": session.scorecard.model_dump()
             })
 
         return VoiceTurnResponse(
@@ -319,6 +343,8 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
             progress_pct=progress_pct,
             adaptive_strategy=adaptive_action.strategy_display if adaptive_action else None,
             evaluated_depth=adaptive_action.evaluated_depth.value if adaptive_action else None,
+            turn_evaluation=turn_eval,
+            scorecard=session.scorecard if session else None,
             topic_coverage=session.topic_coverage if session else None,
             metrics=turn_result.metrics.model_dump()
         )
@@ -332,7 +358,7 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
 @router.websocket("/api/voice/stream/ws")
 async def voice_streaming_websocket(websocket: WebSocket):
     """
-    Full-duplex WebSocket endpoint for real-time streaming voice sessions with State Machine and Adaptive Question Engine.
+    Full-duplex WebSocket endpoint for real-time streaming voice sessions with Answer Evaluation.
     """
     await websocket.accept()
     logger.info("WebSocket voice stream client connected")
@@ -363,6 +389,7 @@ async def voice_streaming_websocket(websocket: WebSocket):
             system_prompt = None
             current_stage = InterviewStage.GREETING
             adaptive_action = None
+            turn_eval = None
             
             if session_id:
                 session = await InterviewSessionRepository.get_session(session_id)
@@ -387,6 +414,11 @@ async def voice_streaming_websocket(websocket: WebSocket):
                             last_candidate_reply=candidate_text,
                             current_stage=current_stage
                         )
+                        turn_eval = AnswerEvaluator.evaluate_turn(
+                            candidate_reply=candidate_text,
+                            topic=ae.get_active_topic(),
+                            stage=current_stage
+                        )
 
                     # Emit stage transition event if advanced
                     if trans_res.transitioned:
@@ -397,13 +429,19 @@ async def voice_streaming_websocket(websocket: WebSocket):
                             "progress_pct": trans_res.progress_pct
                         })
 
-                    # Emit adaptive strategy event
+                    # Emit adaptive action and turn evaluation
                     if adaptive_action:
                         await websocket.send_json({
                             "event_type": "adaptive_action",
                             "strategy_display": adaptive_action.strategy_display,
                             "evaluated_depth": adaptive_action.evaluated_depth.value,
                             "topic": adaptive_action.target_topic
+                        })
+
+                    if turn_eval:
+                        await websocket.send_json({
+                            "event_type": "turn_evaluation",
+                            "evaluation": turn_eval.model_dump()
                         })
 
                     system_prompt = InterviewPromptBuilder.build_system_prompt(

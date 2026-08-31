@@ -20,12 +20,39 @@ interface VoiceMetrics {
   total_latency_ms?: number;
 }
 
+interface TurnEvaluation {
+  overall_score: number;
+  correctness: number;
+  depth_and_mechanics: number;
+  communication_clarity: number;
+  tradeoff_awareness: number;
+  practical_vs_theory: number;
+  strengths: string[];
+  gaps: string[];
+  feedback: string;
+}
+
+interface SessionScorecard {
+  overall_score: number;
+  avg_correctness: number;
+  avg_depth: number;
+  avg_clarity: number;
+  avg_tradeoffs: number;
+  avg_practical: number;
+  total_evaluated_turns: number;
+  passed_recommendation: boolean;
+  summary_verdict: string;
+  top_strengths: string[];
+  areas_for_improvement: string[];
+}
+
 interface TranscriptMessage {
   id: string;
   role: 'candidate' | 'interviewer';
   text: string;
   stage?: string;
   adaptiveStrategy?: string;
+  evaluation?: TurnEvaluation;
   audioBase64?: string;
   metrics?: VoiceMetrics;
   isStreaming?: boolean;
@@ -62,6 +89,10 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
   const [stageNotification, setStageNotification] = useState<string | null>(null);
   const [adaptiveStrategy, setAdaptiveStrategy] = useState<string | null>(null);
   
+  const [sessionScorecard, setSessionScorecard] = useState<SessionScorecard | null>(null);
+  const [latestTurnScore, setLatestTurnScore] = useState<number | null>(null);
+  const [showScorecardModal, setShowScorecardModal] = useState<boolean>(false);
+
   const [inputText, setInputText] = useState('');
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [livekitUrl, setLivekitUrl] = useState<string>('');
@@ -85,6 +116,20 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, agentStatus]);
+
+  // Fetch updated session scorecard
+  const refreshScorecard = async () => {
+    if (!activeSession) return;
+    try {
+      const res = await fetch(`${apiUrl}/api/interview/session/${activeSession.session_id}/scorecard`);
+      if (res.ok) {
+        const sc = await res.json();
+        setSessionScorecard(sc);
+      }
+    } catch (err) {
+      console.warn('Could not refresh scorecard:', err);
+    }
+  };
 
   // Immediately stop active audio playback (Barge-In)
   const cancelActiveAudio = () => {
@@ -174,8 +219,8 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
     }
   };
 
-  // Process streaming turn over WebSocket with State Machine & Adaptive Question Engine
-  const handleSendStreamingTurn = async (textToSend: string) => {
+  // Process streaming turn over WebSocket with Answer Evaluation
+  const handleSendStreamingTurn = async (textToSend: string, userMsgId: string) => {
     cancelActiveAudio();
     const wsUrl = apiUrl.replace(/^http/, 'ws') + '/api/voice/stream/ws';
     const ws = new WebSocket(wsUrl);
@@ -223,6 +268,15 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
           setTimeout(() => setStageNotification(null), 4000);
         } else if (payload.event_type === 'adaptive_action') {
           setAdaptiveStrategy(payload.strategy_display);
+        } else if (payload.event_type === 'turn_evaluation') {
+          const ev: TurnEvaluation = payload.evaluation;
+          setLatestTurnScore(ev.overall_score);
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === userMsgId ? { ...msg, evaluation: ev } : msg
+            )
+          );
+          refreshScorecard();
         } else if (payload.event_type === 'vad_event') {
           if (payload.vad_status === 'candidate_speaking') setVadState('speaking');
           else if (payload.vad_status === 'candidate_paused') setVadState('paused');
@@ -301,7 +355,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
     setInputText('');
 
     if (useStreamingMode) {
-      handleSendStreamingTurn(textToSend);
+      handleSendStreamingTurn(textToSend, userMsgId);
       return;
     }
 
@@ -337,6 +391,17 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
       }
       if (data.adaptive_strategy) {
         setAdaptiveStrategy(data.adaptive_strategy);
+      }
+      if (data.turn_evaluation) {
+        setLatestTurnScore(data.turn_evaluation.overall_score);
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === userMsgId ? { ...msg, evaluation: data.turn_evaluation } : msg
+          )
+        );
+      }
+      if (data.scorecard) {
+        setSessionScorecard(data.scorecard);
       }
 
       const agentMsg: TranscriptMessage = {
@@ -388,7 +453,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
               )}
             </div>
             <span className="room-subtitle">
-              {isConnected ? `Candidate: ${candidateName} • ${agentStatus.toUpperCase()}` : 'LiveKit WebRTC Adaptive Question Engine v0.8.0'}
+              {isConnected ? `Candidate: ${candidateName} • ${agentStatus.toUpperCase()}` : 'LiveKit WebRTC Answer Evaluation Engine v0.9.0'}
             </span>
           </div>
         </div>
@@ -403,6 +468,20 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
         )}
 
         <div className="room-actions">
+          {isConnected && (
+            <button 
+              className="btn btn-secondary btn-scorecard-btn"
+              onClick={() => {
+                refreshScorecard();
+                setShowScorecardModal(true);
+              }}
+            >
+              <span>📊 Scorecard</span>
+              {sessionScorecard && (
+                <span className="scorecard-tag">{sessionScorecard.overall_score.toFixed(1)}</span>
+              )}
+            </button>
+          )}
           {isConnected && (
             <div className="mode-toggle">
               <label className="switch-label">
@@ -479,13 +558,121 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
         </div>
       )}
 
+      {/* Live Scorecard Modal */}
+      {showScorecardModal && (
+        <div className="scorecard-modal-backdrop" onClick={() => setShowScorecardModal(false)}>
+          <div className="scorecard-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="scorecard-modal-header">
+              <div>
+                <h3>Technical Evaluation Scorecard</h3>
+                <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                  {activeSession?.config.role} • {candidateName}
+                </span>
+              </div>
+              <button className="btn-close" onClick={() => setShowScorecardModal(false)}>✕</button>
+            </div>
+
+            <div className="scorecard-modal-body">
+              <div className="scorecard-hero">
+                <div className="hero-score-val">
+                  {sessionScorecard?.overall_score.toFixed(1) || '0.0'}
+                  <span style={{ fontSize: '14px', color: 'var(--text-muted)' }}>/ 5.0</span>
+                </div>
+                <div className="hero-verdict">
+                  <div className="verdict-label">Verdict</div>
+                  <div className="verdict-title">{sessionScorecard?.summary_verdict || 'In Progress'}</div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                    {sessionScorecard?.total_evaluated_turns || 0} technical answers evaluated
+                  </div>
+                </div>
+              </div>
+
+              {/* 5-Dimensional Radar Progress Bars */}
+              <div className="dimensions-breakdown">
+                <h4>Dimensional Breakdown</h4>
+                
+                <div className="dim-row">
+                  <div className="dim-header">
+                    <span>1. Technical Correctness</span>
+                    <span className="dim-val">{sessionScorecard?.avg_correctness.toFixed(1) || '0.0'} / 5.0</span>
+                  </div>
+                  <div className="dim-bar-bg">
+                    <div className="dim-bar-fill" style={{ width: `${((sessionScorecard?.avg_correctness || 0) / 5) * 100}%` }}></div>
+                  </div>
+                </div>
+
+                <div className="dim-row">
+                  <div className="dim-header">
+                    <span>2. Depth & Mechanics</span>
+                    <span className="dim-val">{sessionScorecard?.avg_depth.toFixed(1) || '0.0'} / 5.0</span>
+                  </div>
+                  <div className="dim-bar-bg">
+                    <div className="dim-bar-fill" style={{ width: `${((sessionScorecard?.avg_depth || 0) / 5) * 100}%`, background: 'var(--accent-purple)' }}></div>
+                  </div>
+                </div>
+
+                <div className="dim-row">
+                  <div className="dim-header">
+                    <span>3. Trade-off Awareness</span>
+                    <span className="dim-val">{sessionScorecard?.avg_tradeoffs.toFixed(1) || '0.0'} / 5.0</span>
+                  </div>
+                  <div className="dim-bar-bg">
+                    <div className="dim-bar-fill" style={{ width: `${((sessionScorecard?.avg_tradeoffs || 0) / 5) * 100}%`, background: 'var(--accent-green)' }}></div>
+                  </div>
+                </div>
+
+                <div className="dim-row">
+                  <div className="dim-header">
+                    <span>4. Practical vs Theory</span>
+                    <span className="dim-val">{sessionScorecard?.avg_practical.toFixed(1) || '0.0'} / 5.0</span>
+                  </div>
+                  <div className="dim-bar-bg">
+                    <div className="dim-bar-fill" style={{ width: `${((sessionScorecard?.avg_practical || 0) / 5) * 100}%`, background: 'var(--accent-yellow)' }}></div>
+                  </div>
+                </div>
+
+                <div className="dim-row">
+                  <div className="dim-header">
+                    <span>5. Communication Clarity</span>
+                    <span className="dim-val">{sessionScorecard?.avg_clarity.toFixed(1) || '0.0'} / 5.0</span>
+                  </div>
+                  <div className="dim-bar-bg">
+                    <div className="dim-bar-fill" style={{ width: `${((sessionScorecard?.avg_clarity || 0) / 5) * 100}%`, background: 'var(--accent-blue)' }}></div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Strengths & Gaps */}
+              <div className="scorecard-notes-grid">
+                <div className="notes-box strengths">
+                  <h5>🌟 Top Strengths</h5>
+                  <ul>
+                    {sessionScorecard?.top_strengths?.map((s, idx) => (
+                      <li key={idx}>{s}</li>
+                    )) || <li>Evaluating answers...</li>}
+                  </ul>
+                </div>
+                <div className="notes-box gaps">
+                  <h5>⚠️ Areas for Growth</h5>
+                  <ul>
+                    {sessionScorecard?.areas_for_improvement?.map((g, idx) => (
+                      <li key={idx}>{g}</li>
+                    )) || <li>Evaluating answers...</li>}
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Main Room Body */}
       {!isConnected ? (
         <div className="connection-setup-card">
           <div className="setup-icon">🎙️</div>
           <h2>Launch Interview Session</h2>
           <p className="setup-description">
-            Connecting to LiveKit WebRTC channel with Adaptive Question Engine and dynamic depth probing.
+            Connecting to LiveKit WebRTC channel with Answer Evaluation Engine and multi-dimensional scoring.
           </p>
 
           <div className="form-group">
@@ -535,6 +722,13 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                 </div>
               )}
 
+              {/* Turn Score Pill */}
+              {latestTurnScore !== null && (
+                <div className="turn-score-pill">
+                  ⭐ Score: {latestTurnScore.toFixed(1)}/5.0
+                </div>
+              )}
+
               {/* Barge-In Action Button */}
               {agentStatus === 'speaking' && (
                 <button className="btn-barge-in" onClick={handleInterrupt}>
@@ -554,7 +748,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
             </div>
             <div className="agent-state-label">
               {agentStatus === 'listening' && '👂 Listening to candidate...'}
-              {agentStatus === 'thinking' && '⚡ Evaluating depth & formulating next question...'}
+              {agentStatus === 'thinking' && '⚡ Evaluating depth & scoring answer dimensions...'}
               {agentStatus === 'speaking' && '🗣️ Agent speaking (Candidate can interrupt anytime)...'}
               {agentStatus === 'idle' && 'Ready'}
             </div>
@@ -621,6 +815,11 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                     {msg.role === 'candidate' ? `🧑 ${candidateName}` : '🤖 AI Interviewer'}
                   </span>
                   <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                    {msg.evaluation && (
+                      <span className="bubble-score-tag">
+                        ⭐ {msg.evaluation.overall_score.toFixed(1)}
+                      </span>
+                    )}
                     {msg.adaptiveStrategy && (
                       <span className="bubble-strategy-tag">{msg.adaptiveStrategy}</span>
                     )}
@@ -679,18 +878,18 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                 className="chip-btn"
                 onClick={() => {
                   handleInterrupt();
-                  handleSendTurn('We used Redis for caching to speed up the database reads.');
+                  handleSendTurn('In our high-throughput cluster, we debugged a production deadlock caused by row locks, so we migrated to optimistic versioning with retry backoffs. We accepted occasional rollback latency as a trade-off for eliminating lock contention.');
                 }}
                 disabled={isProcessing}
               >
-                "Shallow: We used Redis for caching"
+                "Strong: Optimistic locking with prod trade-offs"
               </button>
               <button
                 className="chip-btn"
-                onClick={() => handleSendTurn('We prevented cache stampede using distributed mutex locks with TTL jitter and probabilistic early expiration.')}
+                onClick={() => handleSendTurn('We used Redis for caching to speed up the database reads.')}
                 disabled={isProcessing}
               >
-                "Strong: Cache stampede with mutex jitter"
+                "Shallow: We used Redis for caching"
               </button>
             </div>
 
