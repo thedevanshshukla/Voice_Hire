@@ -4,7 +4,7 @@ from pydantic import Field
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "VoiceHire"
-    VERSION: str = "0.12.0"
+    VERSION: str = "0.13.0"
     ENV: str = "development"
     LOG_LEVEL: str = "INFO"
     LOG_JSON: bool = False

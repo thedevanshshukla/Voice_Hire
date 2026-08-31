@@ -2,7 +2,7 @@
 
 ### Realtime AI Technical Interviewer
 
-VoiceHire is a production-oriented realtime Voice AI technical interviewer designed to conduct structured, adaptive technical interviews for software developers. Powered by LiveKit, FastAPI, React, and advanced LLM orchestrations, it goes beyond simple speech-to-text queries to implement natural turn-taking, barge-in detection, an adaptive question engine with depth probing, evidence-based evaluations, mid-interview Knowledge Base RAG grounded in company standards, and short-term / long-term conversational memory.
+VoiceHire is a production-oriented realtime Voice AI technical interviewer designed to conduct structured, adaptive technical interviews for software developers. Powered by LiveKit, FastAPI, React, and advanced LLM orchestrations, it goes beyond simple speech-to-text queries to implement natural turn-taking, barge-in detection, an adaptive question engine with depth probing, evidence-based evaluations, mid-interview Knowledge Base RAG, conversational memory, and agent tool execution.
 
 ---
 
@@ -19,8 +19,8 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
 - [x] **`v0.9.0` (Answer Evaluation Engine)**
 - [x] **`v0.10.0` (Evidence-Based Evaluation)**
 - [x] **`v0.11.0` (Knowledge Base & RAG)**
-- [x] **`v0.12.0` (Memory & Cross-Turn Synthesis)** ── *Current Release*
-- [ ] `v0.13.0` (Agent Tools / Actions)
+- [x] **`v0.12.0` (Memory & Cross-Turn Synthesis)**
+- [x] **`v0.13.0` (Agent Tools / Actions)** ── *Current Release*
 - [ ] `v0.14.0` (Multilingual support: English + Hindi)
 - [ ] `v0.15.0` (Observability)
 - [ ] `v0.16.0` (Voice AI Experimentation)
@@ -31,15 +31,15 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
 
 ---
 
-## 🏗️ Architecture (v0.12.0)
+## 🏗️ Architecture (v0.13.0)
 
 ```
                     ┌──────────────────────────────┐
                     │      Candidate Browser       │
                     │   React / Vite / TypeScript  │
+                    │  - Architecture Diagram View │
+                    │  - Python Sandbox Console    │
                     │  - Memory Claims HUD (🧠)    │
-                    │  - Contradiction Alert (⚠️)   │
-                    │  - Knowledge Base Drawer     │
                     │  - Live Scorecard & Evidence │
                     └──────────────┬───────────────┘
                                    │
@@ -47,17 +47,17 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
                                    │
                     ┌──────────────▼───────────────┐
                     │       FastAPI Backend        │
+                    │  - /api/agent/tools          │
                     │  - /api/interview/memory     │
-                    │  - /api/interview/candidate  │
                     │  - WS /api/voice/stream/ws   │
                     └──────────────┬───────────────┘
                                    │
             ┌──────────────────────┼──────────────────────┐
             ▼                      ▼                      ▼
      ┌─────────────┐        ┌─────────────┐        ┌─────────────┐
-     │ Memory &    │        │ Knowledge   │        │ Adaptive    │
-     │ Profile     │ ──►   │ Base RAG    │ ◄──►   │ Question    │
-     │ Engine      │        │ Engine      │        │ Engine      │
+     │ Agent Tool  │        │ Memory &    │        │ Knowledge   │
+     │ Executor    │ ──►   │ Profile     │ ◄──►   │ Base RAG    │
+     │ (Sandbox/Di)│        │ Engine      │        │ Engine      │
      └─────────────┘        └─────────────┘        └─────────────┘
             │                      │                      │
             └──────────────────────┴──────────────────────┘
@@ -71,17 +71,19 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
 
 ---
 
-## ✨ Features (v0.12.0)
+## ✨ Features (v0.13.0)
 
-- **Short-Term Conversational Memory**: Captures candidate architectural claims (databases, caches, lock choices, queues) and weaves natural cross-turn references into subsequent questions (*"Earlier in past projects you mentioned using Redis..."*).
-- **Contradiction Detection**: Automatically detects conflicting claims made across turns (e.g. claiming Kafka earlier, but later asserting no message queues were used).
+- **Agent Tool Execution & Sandboxing**: Execute candidate-provided Python code snippets in a timed sandbox and view live stdout/stderr execution outputs.
+- **Dynamic Architecture Diagram Generator**: Synthesizes Mermaid flowchart syntax and visual node-edge topologies from the candidate's proposed system design.
+- **Official Documentation Lookup**: Authoritative reference specs (PostgreSQL MVCC, Kafka rebalances, Redis clustering) to verify technical mechanisms.
+- **Short-Term Conversational Memory**: Captures candidate architectural claims and weaves natural cross-turn references into subsequent questions (*"Earlier in past projects you mentioned using Redis..."*).
+- **Contradiction Detection**: Automatically detects conflicting claims made across turns.
 - **Long-Term Multi-Round Candidate Profiles**: Persists candidate scores, strengths, weaknesses, and previously asked questions across multiple rounds.
-- **Knowledge Base Ingestion & RAG**: Ground questions and answer verification in official company engineering standards, custom question banks, and job rubrics.
+- **Knowledge Base Ingestion & RAG**: Ground questions and answer verification in official company engineering standards.
 - **Verbatim Transcript Quote Citations**: Automatically backs every strength and gap with direct candidate quotation snippets.
 - **Technical Red Flag Detection**: Flags unsupported claims, fatal architectural misconceptions, and network failure ignorance.
 - **5-Dimensional Answer Evaluation**: Automatically scores responses across *Correctness*, *Depth & Mechanics*, *Trade-off Awareness*, *Practical vs Theory*, and *Communication Clarity*.
 - **Adaptive Question Engine**: Dynamic depth analysis and specialized mechanical follow-up probes.
-- **6-Stage Interview State Machine**: Structured progression through `Intro -> Past Projects -> Core Technical -> System Design -> Candidate Q&A -> Wrap-Up`.
 - **Real-time Barge-In & Interruption**: Interrupt the AI interviewer naturally mid-sentence with sub-200ms audio cancellation.
 
 ---
@@ -137,6 +139,7 @@ pytest tests
 - [ADR-010: Evidence-Based Evaluation, Quote Extraction & Red Flag Audits](docs/decisions/ADR-010-evidence-based-evaluation.md)
 - [ADR-011: Knowledge Base Ingestion & Mid-Interview RAG Retrieval](docs/decisions/ADR-011-knowledge-base-rag.md)
 - [ADR-012: Short-Term Cross-Turn Memory & Long-Term Candidate Profiling](docs/decisions/ADR-012-memory-cross-turn.md)
+- [ADR-013: Mid-Interview Agent Tools, Code Sandbox & Architecture Visualizer](docs/decisions/ADR-013-agent-tools-and-actions.md)
 - [Version 0.1.0 Release Notes](docs/versions/v0.1.md)
 - [Version 0.2.0 Release Notes](docs/versions/v0.2.md)
 - [Version 0.3.0 Release Notes](docs/versions/v0.3.md)
@@ -149,3 +152,4 @@ pytest tests
 - [Version 0.10.0 Release Notes](docs/versions/v0.10.md)
 - [Version 0.11.0 Release Notes](docs/versions/v0.11.md)
 - [Version 0.12.0 Release Notes](docs/versions/v0.12.md)
+- [Version 0.13.0 Release Notes](docs/versions/v0.13.md)

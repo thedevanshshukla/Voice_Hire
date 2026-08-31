@@ -21,6 +21,10 @@ from app.models.interview import (
     ShortTermMemory, ContradictionItem, CandidateProfile
 )
 from app.models.knowledge import KnowledgeDocument, KnowledgeCategory, KnowledgeSearchResult
+from app.models.tools import (
+    ToolResult, ArchitectureDiagramPayload, CodeExecutionPayload,
+    DocumentationLookupPayload, HumanFlagPayload, ExecuteToolRequest
+)
 from app.db.mongo import InterviewSessionRepository
 from app.interview.prompt_builder import InterviewPromptBuilder
 from app.interview.state_machine import InterviewStateMachine, STAGE_SEQUENCE, STAGE_DISPLAY_NAMES
@@ -29,6 +33,7 @@ from app.interview.evaluation_engine import AnswerEvaluator
 from app.interview.evidence_engine import EvidenceEvaluator
 from app.interview.memory_engine import InterviewMemoryEngine, CandidateProfileRepository
 from app.knowledge.rag_engine import KnowledgeRAGEngine
+from app.agent.tools.executor import AgentToolExecutor
 
 logger = get_logger("api.endpoints")
 router = APIRouter()
@@ -44,12 +49,13 @@ rag_engine = KnowledgeRAGEngine()
 active_state_machines: Dict[str, InterviewStateMachine] = {}
 active_adaptive_engines: Dict[str, AdaptiveQuestionEngine] = {}
 active_memory_engines: Dict[str, InterviewMemoryEngine] = {}
+active_diagrams: Dict[str, ArchitectureDiagramPayload] = {}
 
 class TokenRequest(BaseModel):
     room_name: str = Field(..., description="Unique LiveKit room name")
     identity: str = Field(..., description="Unique participant identity (e.g. candidate-123)")
     name: Optional[str] = Field(None, description="Display name of candidate")
-    session_id: Optional[str] = Field(None, description="Associated interview session ID")
+    session_id: Optional[str] = None
 
 class TokenResponse(BaseModel):
     token: str
@@ -81,6 +87,7 @@ class VoiceTurnResponse(BaseModel):
     rag_snippet: Optional[str] = None
     memory_claims_count: int = 0
     contradictions: List[ContradictionItem] = Field(default_factory=list)
+    active_diagram: Optional[ArchitectureDiagramPayload] = None
     topic_coverage: Optional[Dict[str, Any]] = None
     metrics: Dict[str, Any]
 
@@ -101,7 +108,26 @@ class SearchKnowledgeRequest(BaseModel):
     top_k: int = 2
 
 # ==========================================
-# 1. Knowledge Base & RAG APIs (v0.11.0)
+# 1. Agent Tools & Actions APIs (v0.13.0)
+# ==========================================
+
+@router.get("/api/agent/tools")
+async def list_agent_tools() -> List[Dict[str, Any]]:
+    return AgentToolExecutor.get_tool_definitions()
+
+@router.post("/api/agent/tools/execute", response_model=ToolResult)
+async def execute_agent_tool(req: ExecuteToolRequest) -> ToolResult:
+    res = AgentToolExecutor.execute_tool(
+        tool_name=req.tool_name,
+        arguments=req.arguments,
+        session_id=req.session_id
+    )
+    if req.session_id and req.tool_name == "generate_architecture_diagram" and res.status == "success":
+        active_diagrams[req.session_id] = ArchitectureDiagramPayload(**res.output)
+    return res
+
+# ==========================================
+# 2. Knowledge Base & RAG APIs (v0.11.0)
 # ==========================================
 
 @router.get("/api/knowledge/documents", response_model=List[KnowledgeDocument])
@@ -117,7 +143,7 @@ async def search_knowledge_base(req: SearchKnowledgeRequest) -> List[KnowledgeSe
     return rag_engine.search(query=req.query, role_target=req.role_target, top_k=req.top_k)
 
 # ==========================================
-# 2. Memory & Candidate Profile APIs (v0.12.0)
+# 3. Memory & Candidate Profile APIs (v0.12.0)
 # ==========================================
 
 @router.get("/api/interview/session/{session_id}/memory", response_model=ShortTermMemory)
@@ -134,7 +160,7 @@ async def get_candidate_profile(candidate_id: str) -> CandidateProfile:
     return CandidateProfileRepository.get_profile(candidate_id=candidate_id)
 
 # ==========================================
-# 3. Interview Configuration & Session APIs
+# 4. Interview Configuration & Session APIs
 # ==========================================
 
 @router.get("/api/interview/templates")
@@ -214,7 +240,7 @@ async def list_interview_sessions(candidate_id: Optional[str] = None, limit: int
     return await InterviewSessionRepository.list_sessions(candidate_id=candidate_id, limit=limit)
 
 # ==========================================
-# 4. System Diagnostics & Health
+# 5. System Diagnostics & Health
 # ==========================================
 
 @router.get("/health")
@@ -239,7 +265,8 @@ async def health_check() -> Dict[str, Any]:
             "answer_evaluation": True,
             "evidence_based_evaluation": True,
             "knowledge_base_rag": True,
-            "memory_and_cross_turn": True
+            "memory_and_cross_turn": True,
+            "agent_tools": True
         }
     }
 
@@ -268,7 +295,7 @@ async def voice_status() -> Dict[str, Any]:
     }
 
 # ==========================================
-# 5. Voice Token & Turn Endpoints
+# 6. Voice Token & Turn Endpoints
 # ==========================================
 
 @router.post("/api/voice/token", response_model=TokenResponse)
@@ -332,6 +359,7 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
         memory_claims_count = 0
         contradictions: List[ContradictionItem] = []
         memory_callback = None
+        active_diag = None
         
         if req.session_id:
             session = await InterviewSessionRepository.get_session(req.session_id)
@@ -381,6 +409,18 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
                 rag_results = rag_engine.search(query=search_q, role_target=session.config.role.value, top_k=1)
                 if rag_results:
                     rag_snippet = f"{rag_results[0].title}: {rag_results[0].matched_snippet}"
+
+                # System Design automatic diagram synthesis tool invocation
+                if current_stage == InterviewStage.SYSTEM_DESIGN or "architecture" in candidate_text.lower():
+                    components = ["Client", "API Gateway", "Backend Service", "PostgreSQL", "Redis"]
+                    diag_payload = AgentToolExecutor.generate_architecture_diagram(
+                        components=components,
+                        title=f"{session.candidate_name}'s Architecture Design"
+                    )
+                    active_diagrams[session.session_id] = diag_payload
+                    active_diag = diag_payload
+                elif session.session_id in active_diagrams:
+                    active_diag = active_diagrams[session.session_id]
                 
                 system_prompt = InterviewPromptBuilder.build_system_prompt(
                     config=session.config,
@@ -457,6 +497,7 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
             rag_snippet=rag_snippet,
             memory_claims_count=memory_claims_count,
             contradictions=contradictions,
+            active_diagram=active_diag,
             topic_coverage=session.topic_coverage if session else None,
             metrics=turn_result.metrics.model_dump()
         )
@@ -470,7 +511,7 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
 @router.websocket("/api/voice/stream/ws")
 async def voice_streaming_websocket(websocket: WebSocket):
     """
-    Full-duplex WebSocket endpoint for real-time streaming voice sessions with Answer, Evidence Evaluation, Knowledge RAG, and Memory.
+    Full-duplex WebSocket endpoint for real-time streaming voice sessions with Answer, Evidence Evaluation, Knowledge RAG, Memory, and Tool Calling.
     """
     await websocket.accept()
     logger.info("WebSocket voice stream client connected")
@@ -550,6 +591,20 @@ async def voice_streaming_websocket(websocket: WebSocket):
                     rag_results = rag_engine.search(query=search_q, role_target=session.config.role.value, top_k=1)
                     if rag_results:
                         rag_snippet = f"{rag_results[0].title}: {rag_results[0].matched_snippet}"
+
+                    # Tool call check: Diagram generation
+                    if current_stage == InterviewStage.SYSTEM_DESIGN:
+                        components = ["Client", "API Gateway", "Backend Service", "PostgreSQL", "Redis"]
+                        diag_payload = AgentToolExecutor.generate_architecture_diagram(
+                            components=components,
+                            title=f"{session.candidate_name}'s Architecture Design"
+                        )
+                        active_diagrams[session.session_id] = diag_payload
+                        await websocket.send_json({
+                            "event_type": "tool_executed",
+                            "tool_name": "generate_architecture_diagram",
+                            "output": diag_payload.model_dump()
+                        })
 
                     # Emit stage transition event if advanced
                     if trans_res.transitioned:

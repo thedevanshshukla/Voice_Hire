@@ -121,7 +121,11 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
   
   const [sessionScorecard, setSessionScorecard] = useState<SessionScorecard | null>(null);
   const [evidenceReport, setEvidenceReport] = useState<EvidenceEvaluationReport | null>(null);
-  const [modalTab, setModalTab] = useState<'scorecard' | 'evidence'>('scorecard');
+  const [modalTab, setModalTab] = useState<'scorecard' | 'evidence' | 'tools'>('scorecard');
+  const [activeDiagram, setActiveDiagram] = useState<any>(null);
+  const [sandboxCode, setSandboxCode] = useState<string>('def two_sum(nums, target):\n    seen = {}\n    for i, n in enumerate(nums):\n        if target - n in seen:\n            return [seen[target - n], i]\n        seen[n] = i\n\nprint("Result:", two_sum([2, 7, 11, 15], 9))');
+  const [sandboxOutput, setSandboxOutput] = useState<any>(null);
+  const [isExecutingCode, setIsExecutingCode] = useState<boolean>(false);
   const [latestTurnScore, setLatestTurnScore] = useState<number | null>(null);
   const [showScorecardModal, setShowScorecardModal] = useState<boolean>(false);
 
@@ -258,6 +262,29 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
     }
   };
 
+  const handleRunSandboxCode = async () => {
+    setIsExecutingCode(true);
+    try {
+      const res = await fetch(`${apiUrl}/api/agent/tools/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tool_name: 'execute_code_snippet',
+          arguments: { code: sandboxCode },
+          session_id: activeSession?.session_id
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSandboxOutput(data.output);
+      }
+    } catch (err) {
+      console.error('Failed to run sandbox code:', err);
+    } finally {
+      setIsExecutingCode(false);
+    }
+  };
+
   // Process streaming turn over WebSocket with Answer & Evidence Evaluation
   const handleSendStreamingTurn = async (textToSend: string, userMsgId: string) => {
     cancelActiveAudio();
@@ -322,6 +349,8 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
         } else if (payload.event_type === 'contradiction_detected') {
           setLastContradiction(`⚠️ Contradiction: ${payload.contradiction.explanation}`);
           setTimeout(() => setLastContradiction(null), 5000);
+        } else if (payload.event_type === 'tool_executed' && payload.tool_name === 'generate_architecture_diagram') {
+          setActiveDiagram(payload.output);
         } else if (payload.rag_snippet) {
           setActiveRagSnippet(payload.rag_snippet);
         }
@@ -642,6 +671,12 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                   >
                     Evidence & Red Flags ({evidenceReport?.red_flags?.length || 0})
                   </button>
+                  <button 
+                    className={`tab-btn ${modalTab === 'tools' ? 'active' : ''}`}
+                    onClick={() => setModalTab('tools')}
+                  >
+                    🛠️ Architecture & Tools
+                  </button>
                 </div>
                 <button className="btn-close" onClick={() => setShowScorecardModal(false)}>✕</button>
               </div>
@@ -739,7 +774,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                     </div>
                   </div>
                 </>
-              ) : (
+              ) : modalTab === 'evidence' ? (
                 /* Evidence & Red Flags Tab */
                 <div className="evidence-tab-content">
                   {/* Executive Summary Card */}
@@ -805,6 +840,63 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                         </div>
                       ))}
                     </div>
+                  </div>
+                </div>
+              ) : (
+                /* Tools & Architecture Tab */
+                <div className="tools-tab-content">
+                  {/* System Architecture Diagram Card */}
+                  <div className="tool-card">
+                    <div className="tool-card-header">
+                      <h4>🏛️ Candidate System Architecture Diagram</h4>
+                      <span className="tool-badge">Mermaid Flowchart</span>
+                    </div>
+                    {activeDiagram ? (
+                      <div className="architecture-diagram-viewer">
+                        <div className="diagram-title">{activeDiagram.title}</div>
+                        <div className="diagram-nodes-grid">
+                          {activeDiagram.nodes?.map((node: any) => (
+                            <div key={node.id} className={`arch-node-badge ${node.type}`}>
+                              <span className="arch-node-icon">
+                                {node.type === 'database' ? '💾' : node.type === 'cache' ? '⚡' : node.type === 'queue' ? '📬' : node.type === 'client' ? '💻' : node.type === 'proxy' ? '🛡️' : '⚙️'}
+                              </span>
+                              <span className="arch-node-label">{node.label}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <pre className="mermaid-code-block"><code>{activeDiagram.mermaid_syntax}</code></pre>
+                      </div>
+                    ) : (
+                      <div className="empty-tool-state">
+                        <p>No active architecture diagram generated yet. The AI interviewer will generate one dynamically during the System Design stage.</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Python Code Sandbox Runner */}
+                  <div className="tool-card">
+                    <div className="tool-card-header">
+                      <h4>🐍 Candidate Python Code Sandbox</h4>
+                      <button className="btn btn-secondary btn-sm" onClick={handleRunSandboxCode} disabled={isExecutingCode}>
+                        {isExecutingCode ? 'Running...' : '▶ Run Sandbox Code'}
+                      </button>
+                    </div>
+                    <textarea
+                      className="sandbox-code-editor"
+                      value={sandboxCode}
+                      onChange={(e) => setSandboxCode(e.target.value)}
+                      rows={5}
+                    />
+                    {sandboxOutput && (
+                      <div className="sandbox-output-console">
+                        <div className="console-header">
+                          <span>Execution Console (exit code: {sandboxOutput.exit_code})</span>
+                          <span>{sandboxOutput.execution_time_ms}ms</span>
+                        </div>
+                        {sandboxOutput.stdout && <pre className="stdout-text">{sandboxOutput.stdout}</pre>}
+                        {sandboxOutput.stderr && <pre className="stderr-text">⚠️ {sandboxOutput.stderr}</pre>}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
