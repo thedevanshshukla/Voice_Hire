@@ -2,7 +2,7 @@
 
 ### Realtime AI Technical Interviewer
 
-VoiceHire is a production-oriented realtime Voice AI technical interviewer designed to conduct structured, adaptive technical interviews for software developers. Powered by LiveKit, FastAPI, React, and advanced LLM orchestrations, it goes beyond simple speech-to-text queries to implement natural turn-taking, barge-in detection, an adaptive question engine with depth probing, evidence-based evaluations, mid-interview Knowledge Base RAG, conversational memory, and agent tool execution.
+VoiceHire is a production-oriented realtime Voice AI technical interviewer designed to conduct structured, adaptive technical interviews for software developers. Powered by LiveKit, FastAPI, React, and advanced LLM orchestrations, it goes beyond simple speech-to-text queries to implement natural turn-taking, barge-in detection, an adaptive question engine with depth probing, evidence-based evaluations, mid-interview Knowledge Base RAG, conversational memory, agent tool execution, and multilingual English + Hindi + Hinglish support with dynamic code-switching.
 
 ---
 
@@ -20,8 +20,8 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
 - [x] **`v0.10.0` (Evidence-Based Evaluation)**
 - [x] **`v0.11.0` (Knowledge Base & RAG)**
 - [x] **`v0.12.0` (Memory & Cross-Turn Synthesis)**
-- [x] **`v0.13.0` (Agent Tools / Actions)** ── *Current Release*
-- [ ] `v0.14.0` (Multilingual support: English + Hindi)
+- [x] **`v0.13.0` (Agent Tools / Actions)**
+- [x] **`v0.14.0` (Multilingual support: English + Hindi + Hinglish)** ── *Current Release*
 - [ ] `v0.15.0` (Observability)
 - [ ] `v0.16.0` (Voice AI Experimentation)
 - [ ] `v0.17.0` (Evaluation Suite)
@@ -31,12 +31,13 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
 
 ---
 
-## 🏗️ Architecture (v0.13.0)
+## 🏗️ Architecture (v0.14.0)
 
 ```
                     ┌──────────────────────────────┐
                     │      Candidate Browser       │
                     │   React / Vite / TypeScript  │
+                    │  - Language Selector & HUD   │
                     │  - Architecture Diagram View │
                     │  - Python Sandbox Console    │
                     │  - Memory Claims HUD (🧠)    │
@@ -47,6 +48,7 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
                                    │
                     ┌──────────────▼───────────────┐
                     │       FastAPI Backend        │
+                    │  - /api/voice/detect-language│
                     │  - /api/agent/tools          │
                     │  - /api/interview/memory     │
                     │  - WS /api/voice/stream/ws   │
@@ -55,9 +57,9 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
             ┌──────────────────────┼──────────────────────┐
             ▼                      ▼                      ▼
      ┌─────────────┐        ┌─────────────┐        ┌─────────────┐
-     │ Agent Tool  │        │ Memory &    │        │ Knowledge   │
-     │ Executor    │ ──►   │ Profile     │ ◄──►   │ Base RAG    │
-     │ (Sandbox/Di)│        │ Engine      │        │ Engine      │
+     │ Multilingual│        │ Agent Tool  │        │ Memory &    │
+     │ Language    │ ──►   │ Executor    │ ◄──►   │ Profile     │
+     │ Detector    │        │ (Sandbox/Di)│        │ Engine      │
      └─────────────┘        └─────────────┘        └─────────────┘
             │                      │                      │
             └──────────────────────┴──────────────────────┘
@@ -71,8 +73,10 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
 
 ---
 
-## ✨ Features (v0.13.0)
+## ✨ Features (v0.14.0)
 
+- **Multilingual Support (English + Hindi + Hinglish)**: Conduct interviews in English, pure Hindi (Devanagari script), or natural Indian tech "Hinglish" (conversational Hindi flow with strict English technical vocabulary preservation).
+- **Dynamic Code-Switching Detection**: Automatically detects when a candidate switches languages mid-interview and adjusts voice routing accordingly.
 - **Agent Tool Execution & Sandboxing**: Execute candidate-provided Python code snippets in a timed sandbox and view live stdout/stderr execution outputs.
 - **Dynamic Architecture Diagram Generator**: Synthesizes Mermaid flowchart syntax and visual node-edge topologies from the candidate's proposed system design.
 - **Official Documentation Lookup**: Authoritative reference specs (PostgreSQL MVCC, Kafka rebalances, Redis clustering) to verify technical mechanisms.
@@ -92,7 +96,7 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
 
 - **Backend**: FastAPI, Python 3.11/3.13, LiveKit API, WebSockets, Pytest, Motor / PyMongo
 - **Frontend**: React, Vite, TypeScript, Vanilla HSL CSS
-- **Voice Providers**: Deepgram (STT/TTS), OpenAI & Gemini (LLM), ElevenLabs (TTS)
+- **Voice Providers**: Deepgram (STT/TTS with multilingual models), OpenAI & Gemini (LLM), ElevenLabs (Multilingual v2 TTS)
 - **Database**: MongoDB Atlas
 
 ---
@@ -140,6 +144,7 @@ pytest tests
 - [ADR-011: Knowledge Base Ingestion & Mid-Interview RAG Retrieval](docs/decisions/ADR-011-knowledge-base-rag.md)
 - [ADR-012: Short-Term Cross-Turn Memory & Long-Term Candidate Profiling](docs/decisions/ADR-012-memory-cross-turn.md)
 - [ADR-013: Mid-Interview Agent Tools, Code Sandbox & Architecture Visualizer](docs/decisions/ADR-013-agent-tools-and-actions.md)
+- [ADR-014: Multilingual Support (English, Hindi & Hinglish) & Dynamic Code-Switching](docs/decisions/ADR-014-multilingual-support.md)
 - [Version 0.1.0 Release Notes](docs/versions/v0.1.md)
 - [Version 0.2.0 Release Notes](docs/versions/v0.2.md)
 - [Version 0.3.0 Release Notes](docs/versions/v0.3.md)
@@ -153,3 +158,4 @@ pytest tests
 - [Version 0.11.0 Release Notes](docs/versions/v0.11.md)
 - [Version 0.12.0 Release Notes](docs/versions/v0.12.md)
 - [Version 0.13.0 Release Notes](docs/versions/v0.13.md)
+- [Version 0.14.0 Release Notes](docs/versions/v0.14.md)

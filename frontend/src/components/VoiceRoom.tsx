@@ -127,6 +127,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
   const [sandboxOutput, setSandboxOutput] = useState<any>(null);
   const [isExecutingCode, setIsExecutingCode] = useState<boolean>(false);
   const [latestTurnScore, setLatestTurnScore] = useState<number | null>(null);
+  const [detectedLanguage, setDetectedLanguage] = useState<string>(activeSession?.config.language || 'English');
   const [showScorecardModal, setShowScorecardModal] = useState<boolean>(false);
 
   const [inputText, setInputText] = useState('');
@@ -349,10 +350,17 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
         } else if (payload.event_type === 'contradiction_detected') {
           setLastContradiction(`⚠️ Contradiction: ${payload.contradiction.explanation}`);
           setTimeout(() => setLastContradiction(null), 5000);
+        } else if (payload.event_type === 'language_switched') {
+          setDetectedLanguage(payload.current_language);
+          setStageNotification(`🌐 Language Switched: ${payload.current_language}`);
+          setTimeout(() => setStageNotification(null), 4000);
         } else if (payload.event_type === 'tool_executed' && payload.tool_name === 'generate_architecture_diagram') {
           setActiveDiagram(payload.output);
         } else if (payload.rag_snippet) {
           setActiveRagSnippet(payload.rag_snippet);
+        }
+        if (payload.detected_language) {
+          setDetectedLanguage(payload.detected_language);
         }
         if (payload.memory_claims_count !== undefined) {
           setMemoryClaimsCount(payload.memory_claims_count);
@@ -979,6 +987,13 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
               {memoryClaimsCount > 0 && (
                 <div className="memory-claims-hud-pill">
                   🧠 {memoryClaimsCount} Claim{memoryClaimsCount > 1 ? 's' : ''}
+                </div>
+              )}
+
+              {/* Language Pill */}
+              {detectedLanguage && (
+                <div className="language-hud-pill">
+                  🌐 {detectedLanguage}
                 </div>
               )}
 

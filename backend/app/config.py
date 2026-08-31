@@ -4,7 +4,7 @@ from pydantic import Field
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "VoiceHire"
-    VERSION: str = "0.13.0"
+    VERSION: str = "0.14.0"
     ENV: str = "development"
     LOG_LEVEL: str = "INFO"
     LOG_JSON: bool = False
@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     BARGE_IN_ENABLED: bool = Field(default=True, description="Enable natural interruption / barge-in")
     BARGE_IN_MIN_SPEECH_MS: int = Field(default=120, description="Minimum speech duration during agent turn to trigger barge-in")
     BARGE_IN_ENERGY_THRESHOLD: float = Field(default=0.02, description="Energy threshold for interruption detection")
+    
+    # Multilingual & Code-Switching Settings
+    DEFAULT_LANGUAGE: str = Field(default="English", description="Default interview language (English, Hindi, Hinglish)")
+    AUTO_DETECT_LANGUAGE: bool = Field(default=True, description="Automatically detect candidate language switching")
     
     # API Keys for Cloud Providers
     OPENAI_API_KEY: Optional[str] = None

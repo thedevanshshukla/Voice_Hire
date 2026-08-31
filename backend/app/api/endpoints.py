@@ -13,6 +13,7 @@ from app.voice.streaming_pipeline import StreamingVoicePipeline, StreamAudioEven
 from app.voice.vad.turn_detector import TurnDetector, TurnDetectionResult
 from app.voice.interruption.cancellation import CancellationToken
 from app.voice.interruption.barge_in import BargeInDetector
+from app.voice.multilingual import LanguageDetector
 from app.voice.llm.base import LLMMessage
 from app.models.interview import (
     InterviewSession, InterviewConfig, InterviewRole, ExperienceLevel,
@@ -45,11 +46,12 @@ turn_detector = TurnDetector()
 barge_in_detector = BargeInDetector()
 rag_engine = KnowledgeRAGEngine()
 
-# In-memory active session state machines, adaptive engines & memory engines
+# In-memory active session state machines, adaptive engines, memory & language state
 active_state_machines: Dict[str, InterviewStateMachine] = {}
 active_adaptive_engines: Dict[str, AdaptiveQuestionEngine] = {}
 active_memory_engines: Dict[str, InterviewMemoryEngine] = {}
 active_diagrams: Dict[str, ArchitectureDiagramPayload] = {}
+active_languages: Dict[str, InterviewLanguage] = {}
 
 class TokenRequest(BaseModel):
     room_name: str = Field(..., description="Unique LiveKit room name")
@@ -64,11 +66,18 @@ class TokenResponse(BaseModel):
     identity: str
     session_id: Optional[str] = None
 
+class DetectLanguageRequest(BaseModel):
+    text: str
+
+class DetectLanguageResponse(BaseModel):
+    detected_language: str
+    confidence: float
+
 class VoiceTurnRequest(BaseModel):
     session_id: Optional[str] = None
     audio_base64: Optional[str] = Field(None, description="Base64-encoded audio bytes (optional if text is provided)")
     text: Optional[str] = Field(None, description="Direct text input for testing pipeline")
-    language: str = "en"
+    language: Optional[str] = None
     history: Optional[List[Dict[str, str]]] = None
 
 class VoiceTurnResponse(BaseModel):
@@ -79,6 +88,7 @@ class VoiceTurnResponse(BaseModel):
     current_stage: str
     stage_display_name: str
     progress_pct: float
+    detected_language: str = "English"
     adaptive_strategy: Optional[str] = None
     evaluated_depth: Optional[str] = None
     turn_evaluation: Optional[TurnEvaluation] = None
@@ -108,7 +118,16 @@ class SearchKnowledgeRequest(BaseModel):
     top_k: int = 2
 
 # ==========================================
-# 1. Agent Tools & Actions APIs (v0.13.0)
+# 1. Multilingual & Language APIs (v0.14.0)
+# ==========================================
+
+@router.post("/api/voice/detect-language", response_model=DetectLanguageResponse)
+async def detect_language(req: DetectLanguageRequest) -> DetectLanguageResponse:
+    lang, conf = LanguageDetector.detect_language(req.text)
+    return DetectLanguageResponse(detected_language=lang.value, confidence=conf)
+
+# ==========================================
+# 2. Agent Tools & Actions APIs (v0.13.0)
 # ==========================================
 
 @router.get("/api/agent/tools")
@@ -127,7 +146,7 @@ async def execute_agent_tool(req: ExecuteToolRequest) -> ToolResult:
     return res
 
 # ==========================================
-# 2. Knowledge Base & RAG APIs (v0.11.0)
+# 3. Knowledge Base & RAG APIs (v0.11.0)
 # ==========================================
 
 @router.get("/api/knowledge/documents", response_model=List[KnowledgeDocument])
@@ -143,7 +162,7 @@ async def search_knowledge_base(req: SearchKnowledgeRequest) -> List[KnowledgeSe
     return rag_engine.search(query=req.query, role_target=req.role_target, top_k=req.top_k)
 
 # ==========================================
-# 3. Memory & Candidate Profile APIs (v0.12.0)
+# 4. Memory & Candidate Profile APIs (v0.12.0)
 # ==========================================
 
 @router.get("/api/interview/session/{session_id}/memory", response_model=ShortTermMemory)
@@ -160,7 +179,7 @@ async def get_candidate_profile(candidate_id: str) -> CandidateProfile:
     return CandidateProfileRepository.get_profile(candidate_id=candidate_id)
 
 # ==========================================
-# 4. Interview Configuration & Session APIs
+# 5. Interview Configuration & Session APIs
 # ==========================================
 
 @router.get("/api/interview/templates")
@@ -196,6 +215,7 @@ async def create_interview_session(config: InterviewConfig, candidate_name: str 
     active_state_machines[session.session_id] = InterviewStateMachine(config=config, initial_stage=InterviewStage.GREETING)
     active_adaptive_engines[session.session_id] = AdaptiveQuestionEngine(config=config)
     active_memory_engines[session.session_id] = InterviewMemoryEngine()
+    active_languages[session.session_id] = config.language
     return saved
 
 @router.get("/api/interview/session/{session_id}", response_model=InterviewSession)
@@ -240,7 +260,7 @@ async def list_interview_sessions(candidate_id: Optional[str] = None, limit: int
     return await InterviewSessionRepository.list_sessions(candidate_id=candidate_id, limit=limit)
 
 # ==========================================
-# 5. System Diagnostics & Health
+# 6. System Diagnostics & Health
 # ==========================================
 
 @router.get("/health")
@@ -266,7 +286,8 @@ async def health_check() -> Dict[str, Any]:
             "evidence_based_evaluation": True,
             "knowledge_base_rag": True,
             "memory_and_cross_turn": True,
-            "agent_tools": True
+            "agent_tools": True,
+            "multilingual_hindi_hinglish": True
         }
     }
 
@@ -290,12 +311,13 @@ async def voice_status() -> Dict[str, Any]:
             "min_speech_ms": settings.BARGE_IN_MIN_SPEECH_MS,
             "energy_threshold": settings.BARGE_IN_ENERGY_THRESHOLD
         },
+        "multilingual_support": ["English", "Hindi", "Hinglish"],
         "streaming_supported": True,
         "version": settings.VERSION
     }
 
 # ==========================================
-# 6. Voice Token & Turn Endpoints
+# 7. Voice Token & Turn Endpoints
 # ==========================================
 
 @router.post("/api/voice/token", response_model=TokenResponse)
@@ -360,7 +382,14 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
         contradictions: List[ContradictionItem] = []
         memory_callback = None
         active_diag = None
+        active_lang = InterviewLanguage.ENGLISH
         
+        candidate_text = req.text or ""
+        # Multilingual code-switching detection
+        if candidate_text:
+            detected_lang, _ = LanguageDetector.detect_language(candidate_text)
+            active_lang = detected_lang
+
         if req.session_id:
             session = await InterviewSessionRepository.get_session(req.session_id)
             if session:
@@ -378,7 +407,11 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
                 ae = active_adaptive_engines[req.session_id]
                 me = active_memory_engines[req.session_id]
                 
-                candidate_text = req.text or ""
+                # If explicit language set in config, respect it unless code-switching
+                if session.config.language != InterviewLanguage.ENGLISH and not candidate_text:
+                    active_lang = session.config.language
+                active_languages[session.session_id] = active_lang
+                
                 trans_res = sm.step_turn(last_candidate_reply=candidate_text)
                 current_stage = trans_res.current_stage
                 progress_pct = trans_res.progress_pct
@@ -428,7 +461,8 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
                     stage=current_stage,
                     adaptive_action=adaptive_action,
                     rag_context=rag_snippet,
-                    memory_context=memory_callback
+                    memory_context=memory_callback,
+                    current_language=active_lang
                 )
 
         if req.text and isinstance(voice_pipeline.stt, type(VoiceProviderFactory.get_stt_provider("mock"))):
@@ -438,7 +472,7 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
             audio_in=audio_bytes,
             history=history_msgs,
             system_prompt=system_prompt,
-            language=req.language
+            language="hi" if active_lang in [InterviewLanguage.HINDI, InterviewLanguage.HINGLISH] else "en"
         )
 
         if session:
@@ -489,6 +523,7 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
             current_stage=current_stage.value,
             stage_display_name=STAGE_DISPLAY_NAMES[current_stage],
             progress_pct=progress_pct,
+            detected_language=active_lang.value,
             adaptive_strategy=adaptive_action.strategy_display if adaptive_action else None,
             evaluated_depth=adaptive_action.evaluated_depth.value if adaptive_action else None,
             turn_evaluation=turn_eval,
@@ -511,7 +546,7 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
 @router.websocket("/api/voice/stream/ws")
 async def voice_streaming_websocket(websocket: WebSocket):
     """
-    Full-duplex WebSocket endpoint for real-time streaming voice sessions with Answer, Evidence Evaluation, Knowledge RAG, Memory, and Tool Calling.
+    Full-duplex WebSocket endpoint for real-time streaming voice sessions with Answer, Evidence Evaluation, Knowledge RAG, Memory, Tool Calling, and Multilingual Code-Switching.
     """
     await websocket.accept()
     logger.info("WebSocket voice stream client connected")
@@ -545,6 +580,12 @@ async def voice_streaming_websocket(websocket: WebSocket):
             turn_eval = None
             rag_snippet = None
             memory_callback = None
+            active_lang = InterviewLanguage.ENGLISH
+
+            candidate_text = text or ""
+            if candidate_text:
+                detected_lang, _ = LanguageDetector.detect_language(candidate_text)
+                active_lang = detected_lang
             
             if session_id:
                 session = await InterviewSessionRepository.get_session(session_id)
@@ -563,7 +604,16 @@ async def voice_streaming_websocket(websocket: WebSocket):
                     ae = active_adaptive_engines[session_id]
                     me = active_memory_engines[session_id]
                     
-                    candidate_text = text or ""
+                    # Language tracking
+                    prev_lang = active_languages.get(session_id, session.config.language)
+                    if active_lang != prev_lang and candidate_text:
+                        await websocket.send_json({
+                            "event_type": "language_switched",
+                            "previous_language": prev_lang.value,
+                            "current_language": active_lang.value
+                        })
+                    active_languages[session_id] = active_lang
+                    
                     trans_res = sm.step_turn(last_candidate_reply=candidate_text)
                     current_stage = trans_res.current_stage
 
@@ -635,7 +685,8 @@ async def voice_streaming_websocket(websocket: WebSocket):
                             "event_type": "turn_evaluation",
                             "evaluation": turn_eval.model_dump(),
                             "rag_snippet": rag_snippet,
-                            "memory_claims_count": len(me.memory.claims)
+                            "memory_claims_count": len(me.memory.claims),
+                            "detected_language": active_lang.value
                         })
 
                     system_prompt = InterviewPromptBuilder.build_system_prompt(
@@ -644,7 +695,8 @@ async def voice_streaming_websocket(websocket: WebSocket):
                         stage=current_stage,
                         adaptive_action=adaptive_action,
                         rag_context=rag_snippet,
-                        memory_context=memory_callback
+                        memory_context=memory_callback,
+                        current_language=active_lang
                     )
 
             history_msgs = [
@@ -670,6 +722,7 @@ async def voice_streaming_websocket(websocket: WebSocket):
                     "stage": current_stage.value,
                     "adaptive_strategy": adaptive_action.strategy_display if adaptive_action else None,
                     "rag_snippet": rag_snippet,
+                    "detected_language": active_lang.value,
                     "audio_format": event.audio_format
                 }
                 if event.audio_bytes:

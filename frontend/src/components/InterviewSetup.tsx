@@ -417,6 +417,7 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
                   className="input-field select-field"
                 >
                   <option value="English">English</option>
+                  <option value="Hinglish">Hinglish (Natural Indian Tech)</option>
                   <option value="Hindi">Hindi (हिंदी)</option>
                 </select>
               </div>

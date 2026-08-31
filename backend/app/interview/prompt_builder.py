@@ -6,7 +6,8 @@ from app.interview.adaptive_engine import AdaptiveAction
 class InterviewPromptBuilder:
     """
     Constructs dynamic, role-tailored, stage-conditioned, adaptively targeted,
-    company RAG-grounded, and cross-turn memory-aware system prompts for Voice AI interviews.
+    company RAG-grounded, cross-turn memory-aware, and multilingual (English, Hindi, Hinglish)
+    system prompts for Voice AI interviews.
     """
     
     @staticmethod
@@ -17,14 +18,25 @@ class InterviewPromptBuilder:
         adaptive_action: Optional[AdaptiveAction] = None,
         rag_context: Optional[str] = None,
         memory_context: Optional[str] = None,
-        candidate_profile_context: Optional[str] = None
+        candidate_profile_context: Optional[str] = None,
+        current_language: Optional[InterviewLanguage] = None
     ) -> str:
         topics_str = ", ".join(config.topics)
-        lang_instruction = (
-            "Conduct the entire interview strictly in Hindi (Devanagari script for speech synthesis)."
-            if config.language == InterviewLanguage.HINDI
-            else "Conduct the entire interview strictly in professional English."
-        )
+        active_lang = current_language or config.language
+
+        if active_lang == InterviewLanguage.HINDI:
+            lang_instruction = (
+                "LANGUAGE DIRECTIVE: Conduct the entire interview strictly in Hindi using Devanagari script for speech synthesis. "
+                "Keep core technical terms (e.g. PostgreSQL, Redis, Cache Stampede, Deadlock, Kafka) in their standard technical form."
+            )
+        elif active_lang == InterviewLanguage.HINGLISH:
+            lang_instruction = (
+                "LANGUAGE DIRECTIVE: Conduct the interview in natural, professional Hinglish (conversational Hindi flow with English technical terms). "
+                "CRITICAL: Keep all technical terms, tool names, architectural concepts, and metrics strictly in English (e.g. 'PostgreSQL database', 'Cache invalidation', 'Redis cluster', 'Latency SLA'). "
+                "Use conversational Romanized Hindi for framing questions (e.g. 'Aapne past project mein consistent hashing kaise implement kiya tha?')."
+            )
+        else:
+            lang_instruction = "LANGUAGE DIRECTIVE: Conduct the entire interview strictly in professional English."
 
         jd_section = ""
         if config.job_description and len(config.job_description.strip()) > 10:

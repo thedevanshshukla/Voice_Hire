@@ -20,6 +20,7 @@ class ExperienceLevel(str, Enum):
 class InterviewLanguage(str, Enum):
     ENGLISH = "English"
     HINDI = "Hindi"
+    HINGLISH = "Hinglish"
 
 class InterviewTopic(str, Enum):
     DBMS = "DBMS & SQL"
