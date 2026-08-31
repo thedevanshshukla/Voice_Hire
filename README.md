@@ -2,7 +2,7 @@
 
 ### Realtime AI Technical Interviewer
 
-VoiceHire is a production-oriented realtime Voice AI technical interviewer designed to conduct structured, adaptive technical interviews for software developers. Powered by LiveKit, FastAPI, React, and advanced LLM orchestrations, it goes beyond simple speech-to-text queries to implement natural turn-taking, barge-in detection, an adaptive question engine with depth probing, and evidence-based evaluations with verbatim transcript quote citations.
+VoiceHire is a production-oriented realtime Voice AI technical interviewer designed to conduct structured, adaptive technical interviews for software developers. Powered by LiveKit, FastAPI, React, and advanced LLM orchestrations, it goes beyond simple speech-to-text queries to implement natural turn-taking, barge-in detection, an adaptive question engine with depth probing, evidence-based evaluations, and mid-interview Knowledge Base RAG grounded in company engineering standards.
 
 ---
 
@@ -17,8 +17,8 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
 - [x] **`v0.7.0` (Interview State Machine)**
 - [x] **`v0.8.0` (Adaptive Question Engine)**
 - [x] **`v0.9.0` (Answer Evaluation Engine)**
-- [x] **`v0.10.0` (Evidence-Based Evaluation)** ── *Current Release*
-- [ ] `v0.11.0` (Knowledge Base & RAG)
+- [x] **`v0.10.0` (Evidence-Based Evaluation)**
+- [x] **`v0.11.0` (Knowledge Base & RAG)** ── *Current Release*
 - [ ] `v0.12.0` (Memory)
 - [ ] `v0.13.0` (Agent Tools / Actions)
 - [ ] `v0.14.0` (Multilingual support: English + Hindi)
@@ -31,49 +31,49 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
 
 ---
 
-## 🏗️ Architecture (v0.10.0)
+## 🏗️ Architecture (v0.11.0)
 
 ```
                     ┌──────────────────────────────┐
                     │      Candidate Browser       │
                     │   React / Vite / TypeScript  │
+                    │  - Knowledge Base Drawer     │
+                    │  - Live RAG Context HUD      │
                     │  - Evidence & Red Flags Tab  │
-                    │  - Verbatim Quotation Cards  │
                     │  - Live Scorecard Modal      │
-                    │  - Adaptive Strategy HUD     │
                     └──────────────┬───────────────┘
                                    │
                       WebSocket / REST / WebRTC
                                    │
                     ┌──────────────▼───────────────┐
                     │       FastAPI Backend        │
-                    │  - /api/interview/.../score  │
-                    │  - /api/interview/.../evid.  │
+                    │  - /api/knowledge/...        │
+                    │  - /api/interview/...        │
                     │  - WS /api/voice/stream/ws   │
                     └──────────────┬───────────────┘
                                    │
             ┌──────────────────────┼──────────────────────┐
             ▼                      ▼                      ▼
      ┌─────────────┐        ┌─────────────┐        ┌─────────────┐
-     │ Interview   │        │ Adaptive    │        │ Evidence    │
-     │ State       │        │ Question    │        │ Evaluation  │
-     │ Machine     │        │ Engine      │        │ Engine      │
-     │ (6 Stages)  │        │ (Probing)   │        │ (Citations) │
+     │ Knowledge   │        │ Adaptive    │        │ Evidence    │
+     │ Base RAG    │ ──►   │ Question    │ ◄──►   │ Evaluation  │
+     │ Engine      │        │ Engine      │        │ Engine      │
      └─────────────┘        └─────────────┘        └─────────────┘
             │                      │                      │
             └──────────────────────┴──────────────────────┘
-                                   │ Persists Evidence & Scorecards
+                                   │ Persists Sessions & Knowledge
                     ┌──────────────▼───────────────┐
                     │        MongoDB Atlas         │
                     │   - Transcripts + Quotes     │
-                    │   - Red Flags & Decisions    │
+                    │   - Ingested Company Docs    │
                     └──────────────────────────────┘
 ```
 
 ---
 
-## ✨ Features (v0.10.0)
+## ✨ Features (v0.11.0)
 
+- **Knowledge Base Ingestion & RAG**: Ingest company engineering standards, custom question banks, and job rubrics. Mid-interview, the AI interviewer dynamically matches candidate turns against company guidelines.
 - **Verbatim Transcript Quote Citations**: Automatically backs every strength and gap with direct candidate quotation snippets.
 - **Technical Red Flag Detection**: Flags unsupported claims, fatal architectural misconceptions (e.g. zero-latency distributed ACID), and network failure ignorance.
 - **Confidence Scoring & Executive Recommendations**: Computes evaluation confidence (0.0 to 1.0) and generates an executive hire/no-hire decision report.
@@ -134,6 +134,7 @@ pytest tests
 - [ADR-008: Adaptive Question Engine, Depth Probing & Topic Rotation](docs/decisions/ADR-008-adaptive-question-engine.md)
 - [ADR-009: Multi-Dimensional Answer Evaluation & Cumulative Scorecard](docs/decisions/ADR-009-answer-evaluation.md)
 - [ADR-010: Evidence-Based Evaluation, Quote Extraction & Red Flag Audits](docs/decisions/ADR-010-evidence-based-evaluation.md)
+- [ADR-011: Knowledge Base Ingestion & Mid-Interview RAG Retrieval](docs/decisions/ADR-011-knowledge-base-rag.md)
 - [Version 0.1.0 Release Notes](docs/versions/v0.1.md)
 - [Version 0.2.0 Release Notes](docs/versions/v0.2.md)
 - [Version 0.3.0 Release Notes](docs/versions/v0.3.md)
@@ -144,3 +145,4 @@ pytest tests
 - [Version 0.8.0 Release Notes](docs/versions/v0.8.md)
 - [Version 0.9.0 Release Notes](docs/versions/v0.9.md)
 - [Version 0.10.0 Release Notes](docs/versions/v0.10.md)
+- [Version 0.11.0 Release Notes](docs/versions/v0.11.md)

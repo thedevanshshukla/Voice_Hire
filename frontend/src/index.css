@@ -1534,6 +1534,19 @@ body {
   animation: pulse-red 2s infinite;
 }
 
+.rag-context-hud-pill {
+  font-family: var(--font-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(16, 185, 129, 0.6);
+  background: rgba(16, 185, 129, 0.15);
+  color: #a7f3d0;
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.2);
+  animation: fade-in-up 0.2s ease-out;
+}
+
 /* ==========================================
    Interview Setup Wizard Styles (v0.6.0)
 ========================================== */

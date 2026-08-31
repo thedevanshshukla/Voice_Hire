@@ -115,6 +115,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
   const [stageProgressPct, setStageProgressPct] = useState<number>(16.6);
   const [stageNotification, setStageNotification] = useState<string | null>(null);
   const [adaptiveStrategy, setAdaptiveStrategy] = useState<string | null>(null);
+  const [activeRagSnippet, setActiveRagSnippet] = useState<string | null>(null);
   
   const [sessionScorecard, setSessionScorecard] = useState<SessionScorecard | null>(null);
   const [evidenceReport, setEvidenceReport] = useState<EvidenceEvaluationReport | null>(null);
@@ -307,12 +308,17 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
         } else if (payload.event_type === 'turn_evaluation') {
           const ev: TurnEvaluation = payload.evaluation;
           setLatestTurnScore(ev.overall_score);
+          if (payload.rag_snippet) {
+            setActiveRagSnippet(payload.rag_snippet);
+          }
           setMessages((prev) =>
             prev.map((msg) =>
               msg.id === userMsgId ? { ...msg, evaluation: ev } : msg
             )
           );
           refreshScorecardAndEvidence();
+        } else if (payload.rag_snippet) {
+          setActiveRagSnippet(payload.rag_snippet);
         } else if (payload.event_type === 'vad_event') {
           if (payload.vad_status === 'candidate_speaking') setVadState('speaking');
           else if (payload.vad_status === 'candidate_paused') setVadState('paused');
@@ -853,6 +859,13 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
               {latestTurnScore !== null && (
                 <div className="turn-score-pill">
                   ⭐ Score: {latestTurnScore.toFixed(1)}/5.0
+                </div>
+              )}
+
+              {/* RAG Context Pill */}
+              {activeRagSnippet && (
+                <div className="rag-context-hud-pill" title={activeRagSnippet}>
+                  📚 RAG: {activeRagSnippet.split(':')[0]}
                 </div>
               )}
 

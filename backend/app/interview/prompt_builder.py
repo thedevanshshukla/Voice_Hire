@@ -5,7 +5,8 @@ from app.interview.adaptive_engine import AdaptiveAction
 
 class InterviewPromptBuilder:
     """
-    Constructs dynamic, role-tailored, stage-conditioned, and adaptively targeted system prompts for Voice AI interviews.
+    Constructs dynamic, role-tailored, stage-conditioned, adaptively targeted,
+    and company RAG-grounded system prompts for Voice AI interviews.
     """
     
     @staticmethod
@@ -13,7 +14,8 @@ class InterviewPromptBuilder:
         config: InterviewConfig, 
         candidate_name: str = "Candidate",
         stage: Optional[InterviewStage] = None,
-        adaptive_action: Optional[AdaptiveAction] = None
+        adaptive_action: Optional[AdaptiveAction] = None,
+        rag_context: Optional[str] = None
     ) -> str:
         topics_str = ", ".join(config.topics)
         lang_instruction = (
@@ -40,6 +42,17 @@ TARGET JOB DESCRIPTION & REQUIREMENTS:
         if adaptive_action:
             adaptive_directive = f"\n{adaptive_action.guidance_directive}\n"
 
+        # RAG Company Knowledge Base directive
+        rag_directive = ""
+        if rag_context and len(rag_context.strip()) > 0:
+            rag_directive = f"""
+[OFFICIAL COMPANY ENGINEERING STANDARD & RAG CONTEXT]:
+\"\"\"
+{rag_context.strip()}
+\"\"\"
+Use the above company standard to verify the technical precision of the candidate's answer and challenge them if their design contradicts these guidelines.
+"""
+
         prompt = f"""You are VoiceHire, a senior staff technical interviewer conducting a live voice technical interview for a {config.role.value} position at the {config.experience_level.value} level.
 Candidate Name: {candidate_name}
 Target Duration: {config.duration_minutes} minutes
@@ -48,6 +61,8 @@ Selected Evaluation Topics: {topics_str}
 {stage_directive}
 
 {adaptive_directive}
+
+{rag_directive}
 
 {lang_instruction}
 

@@ -19,12 +19,14 @@ from app.models.interview import (
     InterviewLanguage, InterviewTopic, InterviewStage, TranscriptEntry,
     SessionStatus, TurnEvaluation, SessionScorecard, EvidenceEvaluationReport
 )
+from app.models.knowledge import KnowledgeDocument, KnowledgeCategory, KnowledgeSearchResult
 from app.db.mongo import InterviewSessionRepository
 from app.interview.prompt_builder import InterviewPromptBuilder
 from app.interview.state_machine import InterviewStateMachine, STAGE_SEQUENCE, STAGE_DISPLAY_NAMES
 from app.interview.adaptive_engine import AdaptiveQuestionEngine, AdaptiveAction
 from app.interview.evaluation_engine import AnswerEvaluator
 from app.interview.evidence_engine import EvidenceEvaluator
+from app.knowledge.rag_engine import KnowledgeRAGEngine
 
 logger = get_logger("api.endpoints")
 router = APIRouter()
@@ -34,6 +36,7 @@ voice_pipeline = BasicVoicePipeline()
 streaming_pipeline = StreamingVoicePipeline()
 turn_detector = TurnDetector()
 barge_in_detector = BargeInDetector()
+rag_engine = KnowledgeRAGEngine()
 
 # In-memory active session state machines & adaptive engines
 active_state_machines: Dict[str, InterviewStateMachine] = {}
@@ -72,6 +75,7 @@ class VoiceTurnResponse(BaseModel):
     turn_evaluation: Optional[TurnEvaluation] = None
     scorecard: Optional[SessionScorecard] = None
     evidence_report: Optional[EvidenceEvaluationReport] = None
+    rag_snippet: Optional[str] = None
     topic_coverage: Optional[Dict[str, Any]] = None
     metrics: Dict[str, Any]
 
@@ -86,8 +90,29 @@ class VADFrameResponse(BaseModel):
     pause_duration_ms: float
     pause_count: int
 
+class SearchKnowledgeRequest(BaseModel):
+    query: str
+    role_target: Optional[str] = None
+    top_k: int = 2
+
 # ==========================================
-# 1. Interview Configuration & Session APIs
+# 1. Knowledge Base & RAG APIs (v0.11.0)
+# ==========================================
+
+@router.get("/api/knowledge/documents", response_model=List[KnowledgeDocument])
+async def list_knowledge_documents() -> List[KnowledgeDocument]:
+    return rag_engine.get_all_documents()
+
+@router.post("/api/knowledge/ingest", response_model=KnowledgeDocument)
+async def ingest_knowledge_document(doc: KnowledgeDocument) -> KnowledgeDocument:
+    return rag_engine.ingest_document(doc)
+
+@router.post("/api/knowledge/search", response_model=List[KnowledgeSearchResult])
+async def search_knowledge_base(req: SearchKnowledgeRequest) -> List[KnowledgeSearchResult]:
+    return rag_engine.search(query=req.query, role_target=req.role_target, top_k=req.top_k)
+
+# ==========================================
+# 2. Interview Configuration & Session APIs
 # ==========================================
 
 @router.get("/api/interview/templates")
@@ -147,7 +172,6 @@ async def get_evidence_report(session_id: str) -> EvidenceEvaluationReport:
     if session.evidence_report:
         return session.evidence_report
     
-    # Generate on-demand
     report = EvidenceEvaluator.extract_evidence_report(session)
     await InterviewSessionRepository.update_session(session_id, {"evidence_report": report.model_dump()})
     return report
@@ -167,7 +191,7 @@ async def list_interview_sessions(candidate_id: Optional[str] = None, limit: int
     return await InterviewSessionRepository.list_sessions(candidate_id=candidate_id, limit=limit)
 
 # ==========================================
-# 2. System Diagnostics & Health
+# 3. System Diagnostics & Health
 # ==========================================
 
 @router.get("/health")
@@ -190,7 +214,8 @@ async def health_check() -> Dict[str, Any]:
             "interview_state_machine": True,
             "adaptive_question_engine": True,
             "answer_evaluation": True,
-            "evidence_based_evaluation": True
+            "evidence_based_evaluation": True,
+            "knowledge_base_rag": True
         }
     }
 
@@ -219,7 +244,7 @@ async def voice_status() -> Dict[str, Any]:
     }
 
 # ==========================================
-# 3. Voice Token & Turn Endpoints
+# 4. Voice Token & Turn Endpoints
 # ==========================================
 
 @router.post("/api/voice/token", response_model=TokenResponse)
@@ -279,6 +304,7 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
         adaptive_action = None
         turn_eval = None
         evidence_report = None
+        rag_snippet = None
         
         if req.session_id:
             session = await InterviewSessionRepository.get_session(req.session_id)
@@ -304,18 +330,24 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
                         last_candidate_reply=candidate_text,
                         current_stage=current_stage
                     )
-                    # Evaluate turn across 5 dimensions
                     turn_eval = AnswerEvaluator.evaluate_turn(
                         candidate_reply=candidate_text,
                         topic=ae.get_active_topic(),
                         stage=current_stage
                     )
+
+                # Mid-interview RAG query
+                search_q = candidate_text or ae.get_active_topic()
+                rag_results = rag_engine.search(query=search_q, role_target=session.config.role.value, top_k=1)
+                if rag_results:
+                    rag_snippet = f"{rag_results[0].title}: {rag_results[0].matched_snippet}"
                 
                 system_prompt = InterviewPromptBuilder.build_system_prompt(
                     config=session.config,
                     candidate_name=session.candidate_name,
                     stage=current_stage,
-                    adaptive_action=adaptive_action
+                    adaptive_action=adaptive_action,
+                    rag_context=rag_snippet
                 )
 
         if req.text and isinstance(voice_pipeline.stt, type(VoiceProviderFactory.get_stt_provider("mock"))):
@@ -348,7 +380,6 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
             session.stage_turn_counts = sm.stage_turn_counts
             session.topic_coverage = ae.topic_stats if 'ae' in locals() else {}
 
-            # Aggregate cumulative scorecard & evidence report
             all_evals = [t.evaluation for t in session.transcripts if t.evaluation is not None]
             session.scorecard = AnswerEvaluator.aggregate_scorecard(all_evals)
             session.evidence_report = EvidenceEvaluator.extract_evidence_report(session)
@@ -377,6 +408,7 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
             turn_evaluation=turn_eval,
             scorecard=session.scorecard if session else None,
             evidence_report=evidence_report,
+            rag_snippet=rag_snippet,
             topic_coverage=session.topic_coverage if session else None,
             metrics=turn_result.metrics.model_dump()
         )
@@ -390,7 +422,7 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
 @router.websocket("/api/voice/stream/ws")
 async def voice_streaming_websocket(websocket: WebSocket):
     """
-    Full-duplex WebSocket endpoint for real-time streaming voice sessions with Answer & Evidence Evaluation.
+    Full-duplex WebSocket endpoint for real-time streaming voice sessions with Answer, Evidence Evaluation & Knowledge RAG.
     """
     await websocket.accept()
     logger.info("WebSocket voice stream client connected")
@@ -422,6 +454,7 @@ async def voice_streaming_websocket(websocket: WebSocket):
             current_stage = InterviewStage.GREETING
             adaptive_action = None
             turn_eval = None
+            rag_snippet = None
             
             if session_id:
                 session = await InterviewSessionRepository.get_session(session_id)
@@ -452,6 +485,12 @@ async def voice_streaming_websocket(websocket: WebSocket):
                             stage=current_stage
                         )
 
+                    # RAG lookup
+                    search_q = candidate_text or ae.get_active_topic()
+                    rag_results = rag_engine.search(query=search_q, role_target=session.config.role.value, top_k=1)
+                    if rag_results:
+                        rag_snippet = f"{rag_results[0].title}: {rag_results[0].matched_snippet}"
+
                     # Emit stage transition event if advanced
                     if trans_res.transitioned:
                         await websocket.send_json({
@@ -473,14 +512,16 @@ async def voice_streaming_websocket(websocket: WebSocket):
                     if turn_eval:
                         await websocket.send_json({
                             "event_type": "turn_evaluation",
-                            "evaluation": turn_eval.model_dump()
+                            "evaluation": turn_eval.model_dump(),
+                            "rag_snippet": rag_snippet
                         })
 
                     system_prompt = InterviewPromptBuilder.build_system_prompt(
                         config=session.config,
                         candidate_name=session.candidate_name,
                         stage=current_stage,
-                        adaptive_action=adaptive_action
+                        adaptive_action=adaptive_action,
+                        rag_context=rag_snippet
                     )
 
             history_msgs = [
@@ -505,6 +546,7 @@ async def voice_streaming_websocket(websocket: WebSocket):
                     "text": event.text,
                     "stage": current_stage.value,
                     "adaptive_strategy": adaptive_action.strategy_display if adaptive_action else None,
+                    "rag_snippet": rag_snippet,
                     "audio_format": event.audio_format
                 }
                 if event.audio_bytes:
