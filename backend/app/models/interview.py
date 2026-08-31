@@ -87,6 +87,40 @@ class EvidenceEvaluationReport(BaseModel):
     red_flags: List[RedFlagItem] = Field(default_factory=list)
     generated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
+# ==========================================
+# Memory Schemas (v0.12.0)
+# ==========================================
+
+class ClaimEntity(BaseModel):
+    claim_id: str = Field(default_factory=lambda: f"claim-{uuid.uuid4().hex[:6]}")
+    topic: str
+    statement: str
+    turn_index: int
+    stage: str
+
+class ContradictionItem(BaseModel):
+    earlier_claim: str
+    current_claim: str
+    topic: str
+    explanation: str
+    detected_at_turn: int
+
+class ShortTermMemory(BaseModel):
+    claims: List[ClaimEntity] = Field(default_factory=list)
+    mentioned_technologies: List[str] = Field(default_factory=list)
+    contradictions: List[ContradictionItem] = Field(default_factory=list)
+    cross_turn_callbacks_used: List[str] = Field(default_factory=list)
+
+class CandidateProfile(BaseModel):
+    candidate_id: str
+    candidate_name: str
+    past_session_ids: List[str] = Field(default_factory=list)
+    cumulative_strengths: List[str] = Field(default_factory=list)
+    cumulative_weaknesses: List[str] = Field(default_factory=list)
+    previous_questions_asked: List[str] = Field(default_factory=list)
+    round_progression: List[Dict[str, Any]] = Field(default_factory=list)
+    last_updated: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
 class InterviewConfig(BaseModel):
     role: InterviewRole = InterviewRole.BACKEND
     experience_level: ExperienceLevel = ExperienceLevel.MID
@@ -134,6 +168,7 @@ class InterviewSession(BaseModel):
     topic_coverage: Dict[str, Dict[str, Any]] = Field(default_factory=dict, description="Questions asked & depth scores per topic")
     scorecard: Optional[SessionScorecard] = Field(default_factory=SessionScorecard, description="Cumulative multi-dimensional scorecard")
     evidence_report: Optional[EvidenceEvaluationReport] = Field(None, description="Evidence-backed hiring audit report")
+    memory: Optional[ShortTermMemory] = Field(default_factory=ShortTermMemory, description="Active working memory and claims")
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     started_at: Optional[str] = None
     completed_at: Optional[str] = None

@@ -17,7 +17,8 @@ from app.voice.llm.base import LLMMessage
 from app.models.interview import (
     InterviewSession, InterviewConfig, InterviewRole, ExperienceLevel,
     InterviewLanguage, InterviewTopic, InterviewStage, TranscriptEntry,
-    SessionStatus, TurnEvaluation, SessionScorecard, EvidenceEvaluationReport
+    SessionStatus, TurnEvaluation, SessionScorecard, EvidenceEvaluationReport,
+    ShortTermMemory, ContradictionItem, CandidateProfile
 )
 from app.models.knowledge import KnowledgeDocument, KnowledgeCategory, KnowledgeSearchResult
 from app.db.mongo import InterviewSessionRepository
@@ -26,6 +27,7 @@ from app.interview.state_machine import InterviewStateMachine, STAGE_SEQUENCE, S
 from app.interview.adaptive_engine import AdaptiveQuestionEngine, AdaptiveAction
 from app.interview.evaluation_engine import AnswerEvaluator
 from app.interview.evidence_engine import EvidenceEvaluator
+from app.interview.memory_engine import InterviewMemoryEngine, CandidateProfileRepository
 from app.knowledge.rag_engine import KnowledgeRAGEngine
 
 logger = get_logger("api.endpoints")
@@ -38,9 +40,10 @@ turn_detector = TurnDetector()
 barge_in_detector = BargeInDetector()
 rag_engine = KnowledgeRAGEngine()
 
-# In-memory active session state machines & adaptive engines
+# In-memory active session state machines, adaptive engines & memory engines
 active_state_machines: Dict[str, InterviewStateMachine] = {}
 active_adaptive_engines: Dict[str, AdaptiveQuestionEngine] = {}
+active_memory_engines: Dict[str, InterviewMemoryEngine] = {}
 
 class TokenRequest(BaseModel):
     room_name: str = Field(..., description="Unique LiveKit room name")
@@ -76,6 +79,8 @@ class VoiceTurnResponse(BaseModel):
     scorecard: Optional[SessionScorecard] = None
     evidence_report: Optional[EvidenceEvaluationReport] = None
     rag_snippet: Optional[str] = None
+    memory_claims_count: int = 0
+    contradictions: List[ContradictionItem] = Field(default_factory=list)
     topic_coverage: Optional[Dict[str, Any]] = None
     metrics: Dict[str, Any]
 
@@ -112,7 +117,24 @@ async def search_knowledge_base(req: SearchKnowledgeRequest) -> List[KnowledgeSe
     return rag_engine.search(query=req.query, role_target=req.role_target, top_k=req.top_k)
 
 # ==========================================
-# 2. Interview Configuration & Session APIs
+# 2. Memory & Candidate Profile APIs (v0.12.0)
+# ==========================================
+
+@router.get("/api/interview/session/{session_id}/memory", response_model=ShortTermMemory)
+async def get_session_memory(session_id: str) -> ShortTermMemory:
+    if session_id in active_memory_engines:
+        return active_memory_engines[session_id].memory
+    session = await InterviewSessionRepository.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    return session.memory or ShortTermMemory()
+
+@router.get("/api/interview/candidate/{candidate_id}/profile", response_model=CandidateProfile)
+async def get_candidate_profile(candidate_id: str) -> CandidateProfile:
+    return CandidateProfileRepository.get_profile(candidate_id=candidate_id)
+
+# ==========================================
+# 3. Interview Configuration & Session APIs
 # ==========================================
 
 @router.get("/api/interview/templates")
@@ -147,6 +169,7 @@ async def create_interview_session(config: InterviewConfig, candidate_name: str 
     saved = await InterviewSessionRepository.create_session(session)
     active_state_machines[session.session_id] = InterviewStateMachine(config=config, initial_stage=InterviewStage.GREETING)
     active_adaptive_engines[session.session_id] = AdaptiveQuestionEngine(config=config)
+    active_memory_engines[session.session_id] = InterviewMemoryEngine()
     return saved
 
 @router.get("/api/interview/session/{session_id}", response_model=InterviewSession)
@@ -191,7 +214,7 @@ async def list_interview_sessions(candidate_id: Optional[str] = None, limit: int
     return await InterviewSessionRepository.list_sessions(candidate_id=candidate_id, limit=limit)
 
 # ==========================================
-# 3. System Diagnostics & Health
+# 4. System Diagnostics & Health
 # ==========================================
 
 @router.get("/health")
@@ -215,7 +238,8 @@ async def health_check() -> Dict[str, Any]:
             "adaptive_question_engine": True,
             "answer_evaluation": True,
             "evidence_based_evaluation": True,
-            "knowledge_base_rag": True
+            "knowledge_base_rag": True,
+            "memory_and_cross_turn": True
         }
     }
 
@@ -244,7 +268,7 @@ async def voice_status() -> Dict[str, Any]:
     }
 
 # ==========================================
-# 4. Voice Token & Turn Endpoints
+# 5. Voice Token & Turn Endpoints
 # ==========================================
 
 @router.post("/api/voice/token", response_model=TokenResponse)
@@ -305,6 +329,9 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
         turn_eval = None
         evidence_report = None
         rag_snippet = None
+        memory_claims_count = 0
+        contradictions: List[ContradictionItem] = []
+        memory_callback = None
         
         if req.session_id:
             session = await InterviewSessionRepository.get_session(req.session_id)
@@ -316,14 +343,27 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
                     )
                 if req.session_id not in active_adaptive_engines:
                     active_adaptive_engines[req.session_id] = AdaptiveQuestionEngine(config=session.config)
+                if req.session_id not in active_memory_engines:
+                    active_memory_engines[req.session_id] = InterviewMemoryEngine(initial_memory=session.memory)
 
                 sm = active_state_machines[req.session_id]
                 ae = active_adaptive_engines[req.session_id]
+                me = active_memory_engines[req.session_id]
                 
                 candidate_text = req.text or ""
                 trans_res = sm.step_turn(last_candidate_reply=candidate_text)
                 current_stage = trans_res.current_stage
                 progress_pct = trans_res.progress_pct
+
+                # Process working memory & claims
+                new_contras = me.process_candidate_turn(
+                    candidate_text=candidate_text,
+                    turn_index=session.turn_count + 1,
+                    stage=current_stage
+                )
+                contradictions = me.memory.contradictions
+                memory_claims_count = len(me.memory.claims)
+                memory_callback = me.generate_cross_turn_reference(current_topic=ae.get_active_topic())
 
                 if current_stage in [InterviewStage.RESUME_DEEP_DIVE, InterviewStage.CORE_CONCEPTS, InterviewStage.SYSTEM_DESIGN]:
                     adaptive_action = ae.analyze_turn_and_plan(
@@ -347,7 +387,8 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
                     candidate_name=session.candidate_name,
                     stage=current_stage,
                     adaptive_action=adaptive_action,
-                    rag_context=rag_snippet
+                    rag_context=rag_snippet,
+                    memory_context=memory_callback
                 )
 
         if req.text and isinstance(voice_pipeline.stt, type(VoiceProviderFactory.get_stt_provider("mock"))):
@@ -379,11 +420,15 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
             session.current_stage = current_stage
             session.stage_turn_counts = sm.stage_turn_counts
             session.topic_coverage = ae.topic_stats if 'ae' in locals() else {}
+            session.memory = me.memory if 'me' in locals() else ShortTermMemory()
 
             all_evals = [t.evaluation for t in session.transcripts if t.evaluation is not None]
             session.scorecard = AnswerEvaluator.aggregate_scorecard(all_evals)
             session.evidence_report = EvidenceEvaluator.extract_evidence_report(session)
             evidence_report = session.evidence_report
+
+            # Record long-term candidate profile
+            CandidateProfileRepository.record_session_completion(session)
 
             await InterviewSessionRepository.update_session(session.session_id, {
                 "transcripts": [t.model_dump() for t in session.transcripts],
@@ -392,7 +437,8 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
                 "stage_turn_counts": session.stage_turn_counts,
                 "topic_coverage": session.topic_coverage,
                 "scorecard": session.scorecard.model_dump(),
-                "evidence_report": session.evidence_report.model_dump()
+                "evidence_report": session.evidence_report.model_dump(),
+                "memory": session.memory.model_dump()
             })
 
         return VoiceTurnResponse(
@@ -409,6 +455,8 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
             scorecard=session.scorecard if session else None,
             evidence_report=evidence_report,
             rag_snippet=rag_snippet,
+            memory_claims_count=memory_claims_count,
+            contradictions=contradictions,
             topic_coverage=session.topic_coverage if session else None,
             metrics=turn_result.metrics.model_dump()
         )
@@ -422,7 +470,7 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
 @router.websocket("/api/voice/stream/ws")
 async def voice_streaming_websocket(websocket: WebSocket):
     """
-    Full-duplex WebSocket endpoint for real-time streaming voice sessions with Answer, Evidence Evaluation & Knowledge RAG.
+    Full-duplex WebSocket endpoint for real-time streaming voice sessions with Answer, Evidence Evaluation, Knowledge RAG, and Memory.
     """
     await websocket.accept()
     logger.info("WebSocket voice stream client connected")
@@ -455,6 +503,7 @@ async def voice_streaming_websocket(websocket: WebSocket):
             adaptive_action = None
             turn_eval = None
             rag_snippet = None
+            memory_callback = None
             
             if session_id:
                 session = await InterviewSessionRepository.get_session(session_id)
@@ -466,13 +515,24 @@ async def voice_streaming_websocket(websocket: WebSocket):
                         )
                     if session_id not in active_adaptive_engines:
                         active_adaptive_engines[session_id] = AdaptiveQuestionEngine(config=session.config)
+                    if session_id not in active_memory_engines:
+                        active_memory_engines[session_id] = InterviewMemoryEngine(initial_memory=session.memory)
 
                     sm = active_state_machines[session_id]
                     ae = active_adaptive_engines[session_id]
+                    me = active_memory_engines[session_id]
                     
                     candidate_text = text or ""
                     trans_res = sm.step_turn(last_candidate_reply=candidate_text)
                     current_stage = trans_res.current_stage
+
+                    # Process memory
+                    new_contras = me.process_candidate_turn(
+                        candidate_text=candidate_text,
+                        turn_index=session.turn_count + 1,
+                        stage=current_stage
+                    )
+                    memory_callback = me.generate_cross_turn_reference(current_topic=ae.get_active_topic())
 
                     if current_stage in [InterviewStage.RESUME_DEEP_DIVE, InterviewStage.CORE_CONCEPTS, InterviewStage.SYSTEM_DESIGN]:
                         adaptive_action = ae.analyze_turn_and_plan(
@@ -509,11 +569,18 @@ async def voice_streaming_websocket(websocket: WebSocket):
                             "topic": adaptive_action.target_topic
                         })
 
+                    if new_contras:
+                        await websocket.send_json({
+                            "event_type": "contradiction_detected",
+                            "contradiction": new_contras[0].model_dump()
+                        })
+
                     if turn_eval:
                         await websocket.send_json({
                             "event_type": "turn_evaluation",
                             "evaluation": turn_eval.model_dump(),
-                            "rag_snippet": rag_snippet
+                            "rag_snippet": rag_snippet,
+                            "memory_claims_count": len(me.memory.claims)
                         })
 
                     system_prompt = InterviewPromptBuilder.build_system_prompt(
@@ -521,7 +588,8 @@ async def voice_streaming_websocket(websocket: WebSocket):
                         candidate_name=session.candidate_name,
                         stage=current_stage,
                         adaptive_action=adaptive_action,
-                        rag_context=rag_snippet
+                        rag_context=rag_snippet,
+                        memory_context=memory_callback
                     )
 
             history_msgs = [

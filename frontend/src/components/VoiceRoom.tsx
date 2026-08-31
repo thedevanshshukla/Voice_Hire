@@ -116,6 +116,8 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
   const [stageNotification, setStageNotification] = useState<string | null>(null);
   const [adaptiveStrategy, setAdaptiveStrategy] = useState<string | null>(null);
   const [activeRagSnippet, setActiveRagSnippet] = useState<string | null>(null);
+  const [memoryClaimsCount, setMemoryClaimsCount] = useState<number>(0);
+  const [lastContradiction, setLastContradiction] = useState<string | null>(null);
   
   const [sessionScorecard, setSessionScorecard] = useState<SessionScorecard | null>(null);
   const [evidenceReport, setEvidenceReport] = useState<EvidenceEvaluationReport | null>(null);
@@ -317,8 +319,14 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
             )
           );
           refreshScorecardAndEvidence();
+        } else if (payload.event_type === 'contradiction_detected') {
+          setLastContradiction(`⚠️ Contradiction: ${payload.contradiction.explanation}`);
+          setTimeout(() => setLastContradiction(null), 5000);
         } else if (payload.rag_snippet) {
           setActiveRagSnippet(payload.rag_snippet);
+        }
+        if (payload.memory_claims_count !== undefined) {
+          setMemoryClaimsCount(payload.memory_claims_count);
         } else if (payload.event_type === 'vad_event') {
           if (payload.vad_status === 'candidate_speaking') setVadState('speaking');
           else if (payload.vad_status === 'candidate_paused') setVadState('paused');
@@ -603,6 +611,12 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
         </div>
       )}
 
+      {lastContradiction && (
+        <div className="contradiction-banner">
+          {lastContradiction}
+        </div>
+      )}
+
       {/* Live Scorecard & Evidence Report Modal */}
       {showScorecardModal && (
         <div className="scorecard-modal-backdrop" onClick={() => setShowScorecardModal(false)}>
@@ -866,6 +880,13 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
               {activeRagSnippet && (
                 <div className="rag-context-hud-pill" title={activeRagSnippet}>
                   📚 RAG: {activeRagSnippet.split(':')[0]}
+                </div>
+              )}
+
+              {/* Working Memory Claims Pill */}
+              {memoryClaimsCount > 0 && (
+                <div className="memory-claims-hud-pill">
+                  🧠 {memoryClaimsCount} Claim{memoryClaimsCount > 1 ? 's' : ''}
                 </div>
               )}
 

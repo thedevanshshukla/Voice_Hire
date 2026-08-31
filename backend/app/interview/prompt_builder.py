@@ -6,7 +6,7 @@ from app.interview.adaptive_engine import AdaptiveAction
 class InterviewPromptBuilder:
     """
     Constructs dynamic, role-tailored, stage-conditioned, adaptively targeted,
-    and company RAG-grounded system prompts for Voice AI interviews.
+    company RAG-grounded, and cross-turn memory-aware system prompts for Voice AI interviews.
     """
     
     @staticmethod
@@ -15,7 +15,9 @@ class InterviewPromptBuilder:
         candidate_name: str = "Candidate",
         stage: Optional[InterviewStage] = None,
         adaptive_action: Optional[AdaptiveAction] = None,
-        rag_context: Optional[str] = None
+        rag_context: Optional[str] = None,
+        memory_context: Optional[str] = None,
+        candidate_profile_context: Optional[str] = None
     ) -> str:
         topics_str = ", ".join(config.topics)
         lang_instruction = (
@@ -53,6 +55,21 @@ TARGET JOB DESCRIPTION & REQUIREMENTS:
 Use the above company standard to verify the technical precision of the candidate's answer and challenge them if their design contradicts these guidelines.
 """
 
+        # Memory & Earlier Claims directive
+        memory_directive = ""
+        if memory_context and len(memory_context.strip()) > 0:
+            memory_directive = f"\n{memory_context.strip()}\n"
+
+        profile_directive = ""
+        if candidate_profile_context and len(candidate_profile_context.strip()) > 0:
+            profile_directive = f"""
+[LONG-TERM CANDIDATE MULTI-ROUND PROFILE]:
+\"\"\"
+{candidate_profile_context.strip()}
+\"\"\"
+Avoid repeating previously asked questions from earlier rounds.
+"""
+
         prompt = f"""You are VoiceHire, a senior staff technical interviewer conducting a live voice technical interview for a {config.role.value} position at the {config.experience_level.value} level.
 Candidate Name: {candidate_name}
 Target Duration: {config.duration_minutes} minutes
@@ -63,6 +80,10 @@ Selected Evaluation Topics: {topics_str}
 {adaptive_directive}
 
 {rag_directive}
+
+{memory_directive}
+
+{profile_directive}
 
 {lang_instruction}
 
@@ -75,6 +96,7 @@ INTERVIEWER BEHAVIOR GUIDELINES:
    - For SDE-2 / Senior: Focus on concurrency, failure modes, trade-offs, scalability, and distributed state.
    - For Staff: Focus on system boundaries, consensus, operational resilience, and architectural decisions.
 4. RIGOROUS & EVIDENCE-BASED: If the candidate gives a shallow or incorrect answer, challenge them constructively with a targeted follow-up. If their answer is complete, transition smoothly to the next concept.
-5. NATURAL TONE: Be professional, encouraging, yet intellectually rigorous. Acknowledge good answers briefly before digging deeper.
+5. CROSS-TURN CONTINUITY: Naturally reference previous systems, tools, and databases the candidate described earlier to test architectural consistency.
+6. NATURAL TONE: Be professional, encouraging, yet intellectually rigorous.
 """
         return prompt.strip()
