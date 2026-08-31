@@ -2,7 +2,7 @@
 
 ### Realtime AI Technical Interviewer
 
-VoiceHire is a production-oriented realtime Voice AI technical interviewer designed to conduct adaptive technical interviews for software developers. Powered by LiveKit, FastAPI, React, and advanced LLM orchestrations, it goes beyond simple speech-to-text queries to implement natural turn-taking, barge-in detection, and objective, evidence-based evaluations based on candidate responses.
+VoiceHire is a production-oriented realtime Voice AI technical interviewer designed to conduct adaptive technical interviews for software developers. Powered by LiveKit, FastAPI, React, and advanced LLM orchestrations, it goes beyond simple speech-to-text queries to implement natural turn-taking, barge-in detection, role-tailored prompt construction, and evidence-based evaluations based on candidate responses.
 
 ---
 
@@ -12,8 +12,8 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
 - [x] **`v0.2.0` (Basic Voice Pipeline)**
 - [x] **`v0.3.0` (Realtime / Streaming)**
 - [x] **`v0.4.0` (Natural Turn Taking)**
-- [x] **`v0.5.0` (Interruption & Barge-In)** ── *Current Release*
-- [ ] `v0.6.0` (Interview Foundation)
+- [x] **`v0.5.0` (Interruption & Barge-In)**
+- [x] **`v0.6.0` (Interview Foundation)** ── *Current Release*
 - [ ] `v0.7.0` (Interview State Machine)
 - [ ] `v0.8.0` (Adaptive Question Engine)
 - [ ] `v0.9.0` (Answer Evaluation)
@@ -31,52 +31,54 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
 
 ---
 
-## 🏗️ Architecture (v0.5.0)
+## 🏗️ Architecture (v0.6.0)
 
 ```
                     ┌──────────────────────────────┐
                     │      Candidate Browser       │
                     │   React / Vite / TypeScript  │
-                    │  - Instant Audio Cutoff      │
-                    │  - Barge-In Trigger & HUD    │
-                    │  - Realtime Token Stream     │
+                    │  - Interview Setup Wizard    │
+                    │  - Past Sessions Drawer      │
+                    │  - Barge-In Voice Room       │
                     └──────────────┬───────────────┘
                                    │
                       WebSocket / REST / WebRTC
                                    │
                     ┌──────────────▼───────────────┐
                     │       FastAPI Backend        │
+                    │  - /api/interview/session    │
                     │  - WS /api/voice/stream/ws   │
-                    │  - /api/voice/vad/process    │
                     │  - /api/voice/token & /turn  │
                     └──────────────┬───────────────┘
                                    │
             ┌──────────────────────┴──────────────────────┐
             ▼                                             ▼
      ┌─────────────┐                               ┌─────────────┐
-     │ TurnDetector│                               │ BargeIn     │
-     │ VAD & Pause │                               │ Detector    │
-     │ Endpointing │                               │ Cancel Token│
+     │ Prompt      │                               │ MongoDB     │
+     │ Builder     │                               │ Repository  │
+     │ Role/Level  │                               │ Sessions &  │
+     │ Context     │                               │ Transcripts │
      └─────────────┘                               └─────────────┘
             │                                             │
             └──────────────────────┬──────────────────────┘
                                    │
             ┌──────────────────────▼──────────────────────┐
             │         Streaming Voice Pipeline            │
-            │  STT -> LLM Token Stream -> Sentence Chunker│
-            │           -> Streaming TTS Audio            │
+            │  VAD -> STT -> Streaming LLM -> Chunker     │
+            │       -> Streaming TTS -> Barge-In Cutoff   │
             └─────────────────────────────────────────────┘
 ```
 
 ---
 
-## ✨ Features (v0.5.0)
+## ✨ Features (v0.6.0)
 
-- **Real-time Barge-In & Interruption**: Interrupt the AI interviewer naturally mid-sentence with sub-200ms audio cancellation and generation abortion.
-- **Async Cooperative Cancellation**: `CancellationToken` pattern tears down active LLM token generators and TTS audio streams without resource leaks.
-- **Natural Turn Taking**: State machine distinguishing intra-turn thinking pauses (< 600ms) from completed answers (≥ 800ms silence).
-- **Comprehensive Latency Telemetry**: Dedicated tracking for TTFT, TTFA, STT latency, barge-in detection latency, and cancellation latency.
-- **Interactive Voice Room UI**: Full-featured React dashboard with live VAD pill, audio waveform, typewriter transcript stream, and barge-in controls.
+- **Interview Setup Wizard**: Interactive role selection cards, experience level badges (SDE-1 to Staff), focus topic multi-selector chips, and job description input.
+- **Contextual System Prompt Builder**: Synthesizes persona prompts ensuring conversational brevity, one-question-at-a-time rules, and depth calibrated to candidate seniority.
+- **MongoDB Session Persistence**: Stores configured sessions, live conversation transcripts, turn counts, and telemetry diagnostics.
+- **Past Sessions Drawer**: Review previous interviews directly in the frontend interface.
+- **Real-time Barge-In & Interruption**: Interrupt the AI interviewer naturally mid-sentence with sub-200ms audio cancellation.
+- **Natural Turn Taking**: Adaptive VAD state machine protects candidate thinking pauses (< 600ms) without premature interruptions.
 
 ---
 
@@ -124,8 +126,10 @@ pytest tests
 - [ADR-003: Realtime Streaming Pipeline & Clause-Boundary Chunking](docs/decisions/ADR-003-streaming.md)
 - [ADR-004: Voice Activity Detection & Natural Turn Taking](docs/decisions/ADR-004-turn-detection.md)
 - [ADR-005: Real-time Barge-In & Audio Track Cancellation](docs/decisions/ADR-005-interruption-barge-in.md)
+- [ADR-006: Interview Configuration, Prompt Construction & MongoDB Persistence](docs/decisions/ADR-006-interview-foundation.md)
 - [Version 0.1.0 Release Notes](docs/versions/v0.1.md)
 - [Version 0.2.0 Release Notes](docs/versions/v0.2.md)
 - [Version 0.3.0 Release Notes](docs/versions/v0.3.md)
 - [Version 0.4.0 Release Notes](docs/versions/v0.4.md)
 - [Version 0.5.0 Release Notes](docs/versions/v0.5.md)
+- [Version 0.6.0 Release Notes](docs/versions/v0.6.md)

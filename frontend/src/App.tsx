@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { VoiceRoom } from './components/VoiceRoom';
+import { InterviewSetup, type InterviewSession } from './components/InterviewSetup';
 
 interface HealthStatus {
   status: string;
@@ -15,6 +16,7 @@ interface HealthStatus {
   features?: {
     streaming?: boolean;
     barge_in?: boolean;
+    interview_foundation?: boolean;
   };
 }
 
@@ -22,7 +24,10 @@ function App() {
   const [backendHealth, setBackendHealth] = useState<HealthStatus | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<boolean>(false);
-  const [isVoiceRoomOpen, setIsVoiceRoomOpen] = useState<boolean>(false);
+  
+  // App views: 'home' | 'setup' | 'interview'
+  const [currentView, setCurrentView] = useState<'home' | 'setup' | 'interview'>('home');
+  const [activeSession, setActiveSession] = useState<InterviewSession | null>(null);
 
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -50,53 +55,80 @@ function App() {
     return () => clearInterval(interval);
   }, [API_URL]);
 
+  const handleStartSession = (session: InterviewSession) => {
+    setActiveSession(session);
+    setCurrentView('interview');
+  };
+
   return (
     <div className="app-container">
       {/* Navigation Bar */}
       <header className="navbar">
-        <div className="logo" onClick={() => setIsVoiceRoomOpen(false)} style={{ cursor: 'pointer' }}>
+        <div className="logo" onClick={() => setCurrentView('home')} style={{ cursor: 'pointer' }}>
           <div className="logo-icon">VH</div>
           <span>VoiceHire</span>
         </div>
-        <div className="status-badge">
-          <span 
-            className={`status-dot ${error ? 'disconnected' : 'healthy'}`}
-            title={error ? 'Disconnected from backend API' : 'Connected to backend API'}
-          />
-          <span>
-            {loading ? 'Checking status...' : error ? 'API Offline' : `API Online v${backendHealth?.version}`}
-          </span>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <div className="status-badge">
+            <span 
+              className={`status-dot ${error ? 'disconnected' : 'healthy'}`}
+              title={error ? 'Disconnected from backend API' : 'Connected to backend API'}
+            />
+            <span>
+              {loading ? 'Checking status...' : error ? 'API Offline' : `API Online v${backendHealth?.version}`}
+            </span>
+          </div>
+
+          {currentView !== 'home' && (
+            <button 
+              className="btn btn-secondary btn-sm"
+              onClick={() => setCurrentView(currentView === 'interview' ? 'setup' : 'home')}
+            >
+              {currentView === 'interview' ? '⚙️ Interview Setup' : '🏠 Home'}
+            </button>
+          )}
         </div>
       </header>
 
       {/* Main Content Area */}
       <main className="main-content">
-        {isVoiceRoomOpen ? (
-          <VoiceRoom apiUrl={API_URL} onClose={() => setIsVoiceRoomOpen(false)} />
-        ) : (
+        {currentView === 'setup' && (
+          <InterviewSetup 
+            apiUrl={API_URL} 
+            onStartSession={handleStartSession} 
+          />
+        )}
+
+        {currentView === 'interview' && (
+          <VoiceRoom 
+            apiUrl={API_URL} 
+            activeSession={activeSession}
+            onClose={() => setCurrentView('setup')} 
+          />
+        )}
+
+        {currentView === 'home' && (
           <>
             <section className="hero-section">
-              <div className="badge">Phase 4 Active • Interruption & Barge-In (v0.5.0)</div>
+              <div className="badge">Phase 5 Active • Interview Foundation (v0.6.0)</div>
               <h1 className="hero-title">
                 Realtime Voice AI<br />Technical Interviewer
               </h1>
               <p className="hero-subtitle">
-                VoiceHire conducts fluid technical interviews with instant barge-in support: interrupt the interviewer naturally at any moment to clarify, correct, or redirect the conversation.
+                Conduct structured, evidence-based technical interviews for software engineering roles. 
+                Configure role seniority, probe deep technical domains, paste custom job descriptions, and persist complete interview transcripts in MongoDB.
               </p>
 
               <div className="btn-container">
-                <button className="btn btn-primary" onClick={() => setIsVoiceRoomOpen(true)}>
-                  <span>Launch Voice Interview</span>
+                <button className="btn btn-primary" onClick={() => setCurrentView('setup')}>
+                  <span>Configure & Launch Interview</span>
+                  <span>⚙️</span>
+                </button>
+                <button className="btn btn-secondary" onClick={() => setCurrentView('interview')}>
+                  <span>Quick Start (Default Room)</span>
                   <span>🎙️</span>
                 </button>
-                <a 
-                  href="https://livekit.io" 
-                  target="_blank" 
-                  rel="noopener noreferrer" 
-                  style={{ textDecoration: 'none' }}
-                >
-                  <button className="btn btn-secondary">Powered by LiveKit</button>
-                </a>
               </div>
 
               {/* Providers & Capabilities Banner */}
@@ -106,7 +138,7 @@ function App() {
                   <span className="provider-tag">LLM: <strong>{backendHealth.providers.llm}</strong></span>
                   <span className="provider-tag">TTS: <strong>{backendHealth.providers.tts}</strong></span>
                   <span className="provider-tag">VAD: <strong>{backendHealth.providers.vad || 'energy'}</strong></span>
-                  <span className="provider-tag" style={{ color: 'var(--accent-red)' }}>🛑 Barge-in: <strong>&lt;200ms</strong></span>
+                  <span className="provider-tag" style={{ color: 'var(--accent-purple)' }}>🗄️ MongoDB: <strong>Synced</strong></span>
                 </div>
               )}
             </section>
@@ -114,10 +146,18 @@ function App() {
             {/* Feature Highlights / Roadmap */}
             <section className="features-grid">
               <div className="feature-card">
-                <div className="feature-icon">🛑</div>
-                <h3 className="feature-title">Barge-in Support (v0.5.0)</h3>
+                <div className="feature-icon">🎯</div>
+                <h3 className="feature-title">Interview Foundation (v0.6.0)</h3>
                 <p className="feature-desc">
-                  Interruption engine cancels active TTS audio and LLM token generation immediately (&lt; 200ms) when the candidate speaks.
+                  Role presets (Backend, Frontend, DevOps, Systems Architect), seniority levels (SDE-1 to Staff), custom JD parsing, and MongoDB session persistence.
+                </p>
+              </div>
+
+              <div className="feature-card">
+                <div className="feature-icon">🛑</div>
+                <h3 className="feature-title">Barge-in Support</h3>
+                <p className="feature-desc">
+                  Candidate can interrupt the AI interviewer naturally at any point with sub-200ms audio cancellation and generation abortion.
                 </p>
               </div>
 
@@ -125,15 +165,7 @@ function App() {
                 <div className="feature-icon">⚡</div>
                 <h3 className="feature-title">Natural Turn Taking</h3>
                 <p className="feature-desc">
-                  VAD state machine protects candidate thinking pauses (&lt; 600ms) and endpoints answers cleanly upon natural completion.
-                </p>
-              </div>
-
-              <div className="feature-card">
-                <div className="feature-icon">🎯</div>
-                <h3 className="feature-title">Interview Engine</h3>
-                <p className="feature-desc">
-                  Upcoming v0.6.0+: Adaptive question selection, role-specific topics, and evidence-based scorecards.
+                  Adaptive VAD state machine protects candidate thinking pauses without premature interruptions.
                 </p>
               </div>
             </section>

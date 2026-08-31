@@ -1,0 +1,3 @@
+"""
+VoiceHire Database Package.
+"""

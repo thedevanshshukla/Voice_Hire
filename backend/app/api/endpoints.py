@@ -14,6 +14,12 @@ from app.voice.vad.turn_detector import TurnDetector, TurnDetectionResult
 from app.voice.interruption.cancellation import CancellationToken
 from app.voice.interruption.barge_in import BargeInDetector
 from app.voice.llm.base import LLMMessage
+from app.models.interview import (
+    InterviewSession, InterviewConfig, InterviewRole, ExperienceLevel,
+    InterviewLanguage, InterviewTopic, TranscriptEntry, SessionStatus
+)
+from app.db.mongo import InterviewSessionRepository
+from app.interview.prompt_builder import InterviewPromptBuilder
 
 logger = get_logger("api.endpoints")
 router = APIRouter()
@@ -28,14 +34,17 @@ class TokenRequest(BaseModel):
     room_name: str = Field(..., description="Unique LiveKit room name")
     identity: str = Field(..., description="Unique participant identity (e.g. candidate-123)")
     name: Optional[str] = Field(None, description="Display name of candidate")
+    session_id: Optional[str] = Field(None, description="Associated interview session ID")
 
 class TokenResponse(BaseModel):
     token: str
     url: str
     room_name: str
     identity: str
+    session_id: Optional[str] = None
 
 class VoiceTurnRequest(BaseModel):
+    session_id: Optional[str] = None
     audio_base64: Optional[str] = Field(None, description="Base64-encoded audio bytes (optional if text is provided)")
     text: Optional[str] = Field(None, description="Direct text input for testing pipeline")
     language: str = "en"
@@ -59,13 +68,55 @@ class VADFrameResponse(BaseModel):
     pause_duration_ms: float
     pause_count: int
 
-class InterruptRequest(BaseModel):
-    reason: Optional[str] = "candidate_barge_in"
+# ==========================================
+# 1. Interview Configuration & Session APIs
+# ==========================================
 
-class InterruptResponse(BaseModel):
-    interrupted: bool
-    cancellation_latency_ms: float
-    reason: str
+@router.get("/api/interview/templates")
+async def get_interview_templates() -> Dict[str, Any]:
+    """
+    Returns available roles, experience levels, default topics, and supported languages.
+    """
+    return {
+        "roles": [r.value for r in InterviewRole],
+        "experience_levels": [e.value for e in ExperienceLevel],
+        "topics": [t.value for t in InterviewTopic],
+        "languages": [l.value for l in InterviewLanguage],
+        "default_duration_minutes": 30
+    }
+
+@router.post("/api/interview/session", response_model=InterviewSession)
+async def create_interview_session(config: InterviewConfig, candidate_name: str = "Candidate") -> InterviewSession:
+    """
+    Create and persist a new technical interview session with role, level, topics, and JD in MongoDB.
+    """
+    session = InterviewSession(
+        candidate_name=candidate_name,
+        config=config,
+        status=SessionStatus.CONFIGURED
+    )
+    return await InterviewSessionRepository.create_session(session)
+
+@router.get("/api/interview/session/{session_id}", response_model=InterviewSession)
+async def get_interview_session(session_id: str) -> InterviewSession:
+    """
+    Retrieve interview session details and transcript history from MongoDB.
+    """
+    session = await InterviewSessionRepository.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    return session
+
+@router.get("/api/interview/sessions", response_model=List[InterviewSession])
+async def list_interview_sessions(candidate_id: Optional[str] = None, limit: int = 20) -> List[InterviewSession]:
+    """
+    List previous interview sessions from MongoDB.
+    """
+    return await InterviewSessionRepository.list_sessions(candidate_id=candidate_id, limit=limit)
+
+# ==========================================
+# 2. System Diagnostics & Health
+# ==========================================
 
 @router.get("/health")
 async def health_check() -> Dict[str, Any]:
@@ -85,14 +136,15 @@ async def health_check() -> Dict[str, Any]:
         },
         "features": {
             "streaming": True,
-            "barge_in": settings.BARGE_IN_ENABLED
+            "barge_in": settings.BARGE_IN_ENABLED,
+            "interview_foundation": True
         }
     }
 
 @router.get("/api/voice/status")
 async def voice_status() -> Dict[str, Any]:
     """
-    Returns the configured voice providers, LiveKit status, streaming, VAD, and barge-in settings.
+    Returns configured voice providers, LiveKit status, streaming, VAD, and interview configurations.
     """
     return {
         "livekit_url": settings.LIVEKIT_URL,
@@ -116,6 +168,10 @@ async def voice_status() -> Dict[str, Any]:
         "version": settings.VERSION
     }
 
+# ==========================================
+# 3. Voice Token & Turn Endpoints
+# ==========================================
+
 @router.post("/api/voice/token", response_model=TokenResponse)
 async def get_voice_token(req: TokenRequest) -> TokenResponse:
     """
@@ -131,7 +187,8 @@ async def get_voice_token(req: TokenRequest) -> TokenResponse:
             token=token,
             url=settings.LIVEKIT_URL,
             room_name=req.room_name,
-            identity=req.identity
+            identity=req.identity,
+            session_id=req.session_id
         )
     except Exception as e:
         logger.error("Failed to generate token", extra={"error": str(e)})
@@ -161,7 +218,7 @@ async def process_vad_frame(req: VADFrameRequest) -> VADFrameResponse:
 @router.post("/api/voice/turn", response_model=VoiceTurnResponse)
 async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
     """
-    Process a single voice turn with roundtrip latency diagnostics.
+    Process a single voice turn with contextual system prompt generation and transcript persistence.
     """
     try:
         if req.audio_base64:
@@ -174,14 +231,33 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
             for item in req.history:
                 history_msgs.append(LLMMessage(role=item.get("role", "user"), content=item.get("content", "")))
 
+        # Retrieve session context if session_id provided
+        system_prompt = None
+        session = None
+        if req.session_id:
+            session = await InterviewSessionRepository.get_session(req.session_id)
+            if session:
+                system_prompt = InterviewPromptBuilder.build_system_prompt(session.config, session.candidate_name)
+
         if req.text and isinstance(voice_pipeline.stt, type(VoiceProviderFactory.get_stt_provider("mock"))):
             voice_pipeline.stt.default_response = req.text
 
         turn_result: PipelineTurnResult = await voice_pipeline.process_turn(
             audio_in=audio_bytes,
             history=history_msgs,
+            system_prompt=system_prompt,
             language=req.language
         )
+
+        # Persist transcripts to session if active
+        if session:
+            session.transcripts.append(TranscriptEntry(role="candidate", text=turn_result.transcript))
+            session.transcripts.append(TranscriptEntry(role="interviewer", text=turn_result.response_text, metrics=turn_result.metrics.model_dump()))
+            session.turn_count += 1
+            await InterviewSessionRepository.update_session(session.session_id, {
+                "transcripts": [t.model_dump() for t in session.transcripts],
+                "turn_count": session.turn_count
+            })
 
         return VoiceTurnResponse(
             transcript=turn_result.transcript,
@@ -200,7 +276,7 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
 @router.websocket("/api/voice/stream/ws")
 async def voice_streaming_websocket(websocket: WebSocket):
     """
-    Full-duplex WebSocket endpoint for real-time streaming voice sessions with VAD and Barge-In support.
+    Full-duplex WebSocket endpoint for real-time streaming voice sessions with Interview Context and Barge-In.
     """
     await websocket.accept()
     logger.info("WebSocket voice stream client connected")
@@ -225,8 +301,16 @@ async def voice_streaming_websocket(websocket: WebSocket):
 
             text = data.get("text")
             audio_b64 = data.get("audio_base64")
+            session_id = data.get("session_id")
             history = data.get("history", [])
             
+            # Fetch contextual system prompt
+            system_prompt = None
+            if session_id:
+                session = await InterviewSessionRepository.get_session(session_id)
+                if session:
+                    system_prompt = InterviewPromptBuilder.build_system_prompt(session.config, session.candidate_name)
+
             history_msgs = [
                 LLMMessage(role=m.get("role", "user"), content=m.get("content", ""))
                 for m in history
@@ -235,11 +319,12 @@ async def voice_streaming_websocket(websocket: WebSocket):
             raw_audio = base64.b64decode(audio_b64) if audio_b64 else None
             current_token = CancellationToken()
             
-            # Execute streaming turn with cancellation token
+            # Execute streaming turn with contextual prompt and cancellation token
             async for event in streaming_pipeline.stream_turn(
                 input_text=text,
                 raw_audio=raw_audio,
                 history=history_msgs,
+                system_prompt=system_prompt,
                 cancellation_token=current_token
             ):
                 payload = {

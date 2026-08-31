@@ -1,0 +1,3 @@
+"""
+VoiceHire Domain Models Package.
+"""

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import type { InterviewSession } from './InterviewSetup';
 
 interface VoiceMetrics {
   stt_latency_ms?: number;
@@ -32,12 +33,13 @@ interface TranscriptMessage {
 
 interface VoiceRoomProps {
   apiUrl: string;
+  activeSession?: InterviewSession | null;
   onClose?: () => void;
 }
 
-export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
-  const [roomName, setRoomName] = useState('interview-session-01');
-  const [candidateName, setCandidateName] = useState('Candidate');
+export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onClose }) => {
+  const [roomName, setRoomName] = useState(activeSession ? activeSession.session_id : 'interview-session-01');
+  const [candidateName, setCandidateName] = useState(activeSession ? activeSession.candidate_name : 'Candidate');
   const [isConnected, setIsConnected] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -56,6 +58,13 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Auto-connect if activeSession is passed
+  useEffect(() => {
+    if (activeSession && !isConnected) {
+      handleConnect();
+    }
+  }, [activeSession]);
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -89,9 +98,10 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          room_name: roomName,
+          room_name: activeSession ? activeSession.session_id : roomName,
           identity: `candidate-${Date.now()}`,
-          name: candidateName
+          name: candidateName,
+          session_id: activeSession?.session_id
         })
       });
 
@@ -106,11 +116,12 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
       setAgentStatus('listening');
       setVadState('idle');
 
-      // Initial greeting message
+      // Initial greeting message tailored to role
+      const roleName = activeSession?.config?.role || 'Software Engineer';
       const initialGreeting: TranscriptMessage = {
         id: 'msg-0',
         role: 'interviewer',
-        text: `Hello ${candidateName}! Welcome to your technical interview. Let's begin. Could you start by introducing yourself and your background?`,
+        text: `Hello ${candidateName}! Welcome to your technical interview for the ${roleName} position. Could you introduce yourself and tell me about a complex project you recently architected?`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
       };
       setMessages([initialGreeting]);
@@ -131,6 +142,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
     setAgentStatus('idle');
     setVadState('idle');
     setActiveMetrics(null);
+    if (onClose) onClose();
   };
 
   // Play audio from base64 string
@@ -145,7 +157,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
     }
   };
 
-  // Process streaming turn over WebSocket with Barge-in handling
+  // Process streaming turn over WebSocket with Interview Session Context
   const handleSendStreamingTurn = async (textToSend: string) => {
     cancelActiveAudio();
     const wsUrl = apiUrl.replace(/^http/, 'ws') + '/api/voice/stream/ws';
@@ -177,6 +189,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
       ws.send(JSON.stringify({
         action: 'turn',
         text: textToSend,
+        session_id: activeSession?.session_id,
         history: historyPayload
       }));
     };
@@ -278,6 +291,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          session_id: activeSession?.session_id,
           text: textToSend,
           language: 'en',
           history: historyPayload
@@ -328,14 +342,28 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
         <div className="room-info">
           <div className={`status-indicator ${isConnected ? 'active' : 'inactive'}`} />
           <div>
-            <h3 className="room-title">
-              {isConnected ? `Room: ${roomName}` : 'Technical Interview Session'}
-            </h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <h3 className="room-title">
+                {activeSession ? `${activeSession.config.role} Interview` : `Room: ${roomName}`}
+              </h3>
+              {activeSession && (
+                <span className="badge badge-sm">{activeSession.config.experience_level}</span>
+              )}
+            </div>
             <span className="room-subtitle">
-              {isConnected ? `Connected as ${candidateName} • ${agentStatus.toUpperCase()}` : 'LiveKit WebRTC Barge-In Support v0.5.0'}
+              {isConnected ? `Candidate: ${candidateName} • ${agentStatus.toUpperCase()}` : 'LiveKit WebRTC Interview v0.6.0'}
             </span>
           </div>
         </div>
+
+        {/* Topics pill tags */}
+        {activeSession?.config?.topics && (
+          <div className="header-topics-bar">
+            {activeSession.config.topics.map((t, idx) => (
+              <span key={idx} className="header-topic-chip">{t}</span>
+            ))}
+          </div>
+        )}
 
         <div className="room-actions">
           {isConnected && (
@@ -352,7 +380,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
           )}
           {isConnected ? (
             <button className="btn btn-disconnect" onClick={handleDisconnect}>
-              Leave Session
+              End Interview
             </button>
           ) : null}
           {onClose && (
@@ -379,9 +407,9 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
       {!isConnected ? (
         <div className="connection-setup-card">
           <div className="setup-icon">🎙️</div>
-          <h2>Join Voice Interview Session</h2>
+          <h2>Launch Interview Session</h2>
           <p className="setup-description">
-            Experience natural conversational interviews with real-time barge-in support: interrupt the interviewer naturally at any time.
+            Connecting to LiveKit WebRTC channel with MongoDB session persistence and dynamic system prompt injection.
           </p>
 
           <div className="form-group">
@@ -407,7 +435,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
           </div>
 
           <button className="btn btn-primary btn-full" onClick={handleConnect}>
-            <span>Initialize & Connect Voice Room</span>
+            <span>Connect & Begin Interview</span>
             <span>→</span>
           </button>
         </div>
@@ -496,7 +524,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
 
             {sessionToken && (
               <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
-                LiveKit Host: {livekitUrl} • Session Auth: JWT Token Active
+                LiveKit Host: {livekitUrl} • Session ID: {activeSession?.session_id || roomName} • MongoDB Synced
               </div>
             )}
           </div>
@@ -562,18 +590,18 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
                 className="chip-btn"
                 onClick={() => {
                   handleInterrupt();
-                  handleSendTurn('Wait, let me clarify that point regarding Redis clustering.');
+                  handleSendTurn('Let me explain our database sharding and index strategy.');
                 }}
                 disabled={isProcessing}
               >
-                "Wait, let me clarify Redis..."
+                "Explain database sharding"
               </button>
               <button
                 className="chip-btn"
-                onClick={() => handleSendTurn('In microservices, the Saga pattern coordinates distributed transactions without 2PC blocking.')}
+                onClick={() => handleSendTurn('We use optimistic locking with version columns to avoid deadlocks under high concurrency.')}
                 disabled={isProcessing}
               >
-                "Saga Pattern for transactions"
+                "Optimistic locking concurrency"
               </button>
             </div>
 
@@ -588,7 +616,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
                 type="text"
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
-                placeholder="Speak, interrupt, or type response..."
+                placeholder="Speak, interrupt, or type technical response..."
                 className="input-field voice-input"
                 disabled={isProcessing}
               />
