@@ -17,13 +17,20 @@ class TurnLatencyMetrics(BaseModel):
     pause_count: int = Field(0, description="Number of intra-turn thinking pauses detected")
     endpointing_delay_ms: float = Field(0.0, description="Duration of terminal silence before taking turn")
     
+    # Barge-In / Interruption Metrics (v0.5.0)
+    interrupted: bool = Field(False, description="Whether this turn was interrupted by candidate barge-in")
+    interruption_count: int = Field(0, description="Cumulative count of interruptions")
+    interruption_detection_ms: float = Field(0.0, description="Latency to detect candidate speech during agent output")
+    cancellation_latency_ms: float = Field(0.0, description="Latency to abort active TTS and LLM streams")
+    interrupted_at_word: Optional[str] = Field(None, description="The word/phrase being spoken when interrupted")
+
     total_perceived_ms: float = Field(0.0, description="Perceived latency: Speech end to first audio playback")
     total_turn_ms: float = Field(0.0, description="Total roundtrip duration of the turn")
 
 class StreamingMetricsTracker:
     """
     Precision latency tracker for streaming Voice AI pipelines.
-    Tracks Time-to-First-Token (TTFT), Time-to-First-Audio (TTFA), VAD endpointing, and total turnaround.
+    Tracks TTFT, TTFA, VAD endpointing, and Barge-In cancellation latencies.
     """
     def __init__(self):
         self.turn_start_time: float = time.perf_counter()
@@ -43,10 +50,24 @@ class StreamingMetricsTracker:
         self.pause_count: int = 0
         self.endpointing_delay_ms: float = 0.0
 
+        # Interruption Metrics
+        self.interrupted: bool = False
+        self.interruption_count: int = 0
+        self.interruption_detection_ms: float = 0.0
+        self.cancellation_latency_ms: float = 0.0
+        self.interrupted_at_word: Optional[str] = None
+
     def set_turn_vad_metrics(self, speech_ms: float, pause_count: int, endpointing_ms: float):
         self.speech_duration_ms = speech_ms
         self.pause_count = pause_count
         self.endpointing_delay_ms = endpointing_ms
+
+    def record_interruption(self, detection_ms: float, cancellation_ms: float, word: Optional[str] = None):
+        self.interrupted = True
+        self.interruption_count += 1
+        self.interruption_detection_ms = detection_ms
+        self.cancellation_latency_ms = cancellation_ms
+        self.interrupted_at_word = word
 
     def mark_stt_start(self):
         self.stt_start_time = time.perf_counter()
@@ -119,9 +140,14 @@ class StreamingMetricsTracker:
             speech_duration_ms=round(self.speech_duration_ms, 2),
             pause_count=self.pause_count,
             endpointing_delay_ms=round(self.endpointing_delay_ms, 2),
+            interrupted=self.interrupted,
+            interruption_count=self.interruption_count,
+            interruption_detection_ms=round(self.interruption_detection_ms, 2),
+            cancellation_latency_ms=round(self.cancellation_latency_ms, 2),
+            interrupted_at_word=self.interrupted_at_word,
             total_perceived_ms=round(perceived_ms, 2),
             total_turn_ms=round(total_ms, 2)
         )
         
-        logger.info("Turn Telemetry", extra=metrics.model_dump())
+        logger.info("Turn Telemetry (with Barge-in)", extra=metrics.model_dump())
         return metrics

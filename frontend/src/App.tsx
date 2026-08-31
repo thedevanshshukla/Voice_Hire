@@ -12,6 +12,10 @@ interface HealthStatus {
     tts: string;
     vad?: string;
   };
+  features?: {
+    streaming?: boolean;
+    barge_in?: boolean;
+  };
 }
 
 function App() {
@@ -72,13 +76,12 @@ function App() {
         ) : (
           <>
             <section className="hero-section">
-              <div className="badge">Phase 3 Active • Natural Turn Taking (v0.4.0)</div>
+              <div className="badge">Phase 4 Active • Interruption & Barge-In (v0.5.0)</div>
               <h1 className="hero-title">
                 Realtime Voice AI<br />Technical Interviewer
               </h1>
               <p className="hero-subtitle">
-                VoiceHire conducts human-like conversational technical interviews, equipped with Voice Activity Detection (VAD) 
-                to respect candidate thinking pauses without premature interruption.
+                VoiceHire conducts fluid technical interviews with instant barge-in support: interrupt the interviewer naturally at any moment to clarify, correct, or redirect the conversation.
               </p>
 
               <div className="btn-container">
@@ -96,14 +99,14 @@ function App() {
                 </a>
               </div>
 
-              {/* Providers & VAD Status Banner */}
+              {/* Providers & Capabilities Banner */}
               {backendHealth?.providers && (
                 <div className="providers-info-banner">
                   <span className="provider-tag">STT: <strong>{backendHealth.providers.stt}</strong></span>
                   <span className="provider-tag">LLM: <strong>{backendHealth.providers.llm}</strong></span>
                   <span className="provider-tag">TTS: <strong>{backendHealth.providers.tts}</strong></span>
                   <span className="provider-tag">VAD: <strong>{backendHealth.providers.vad || 'energy'}</strong></span>
-                  <span className="provider-tag" style={{ color: 'var(--accent-green)' }}>⚡ Endpointing: <strong>Active</strong></span>
+                  <span className="provider-tag" style={{ color: 'var(--accent-red)' }}>🛑 Barge-in: <strong>&lt;200ms</strong></span>
                 </div>
               )}
             </section>
@@ -111,26 +114,26 @@ function App() {
             {/* Feature Highlights / Roadmap */}
             <section className="features-grid">
               <div className="feature-card">
-                <div className="feature-icon">⚡</div>
-                <h3 className="feature-title">Natural Turn Taking (v0.4.0)</h3>
-                <p className="feature-desc">
-                  Intelligent endpointing engine that distinguishes between mid-sentence candidate thinking pauses and completed answers.
-                </p>
-              </div>
-
-              <div className="feature-card">
-                <div className="feature-icon">🎙️</div>
-                <h3 className="feature-title">Adaptive VAD</h3>
-                <p className="feature-desc">
-                  Energy & RMS Voice Activity Detection with dynamic background noise floor tracking and configurable silence thresholds.
-                </p>
-              </div>
-
-              <div className="feature-card">
                 <div className="feature-icon">🛑</div>
-                <h3 className="feature-title">Barge-in Support</h3>
+                <h3 className="feature-title">Barge-in Support (v0.5.0)</h3>
                 <p className="feature-desc">
-                  Upcoming v0.5.0: Interrupter agent stops speaking immediately upon candidate barge-in, cancelling active audio tracks.
+                  Interruption engine cancels active TTS audio and LLM token generation immediately (&lt; 200ms) when the candidate speaks.
+                </p>
+              </div>
+
+              <div className="feature-card">
+                <div className="feature-icon">⚡</div>
+                <h3 className="feature-title">Natural Turn Taking</h3>
+                <p className="feature-desc">
+                  VAD state machine protects candidate thinking pauses (&lt; 600ms) and endpoints answers cleanly upon natural completion.
+                </p>
+              </div>
+
+              <div className="feature-card">
+                <div className="feature-icon">🎯</div>
+                <h3 className="feature-title">Interview Engine</h3>
+                <p className="feature-desc">
+                  Upcoming v0.6.0+: Adaptive question selection, role-specific topics, and evidence-based scorecards.
                 </p>
               </div>
             </section>

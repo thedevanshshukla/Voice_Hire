@@ -11,7 +11,8 @@ from app.voice.factory import VoiceProviderFactory
 from app.voice.pipeline import BasicVoicePipeline, PipelineTurnResult
 from app.voice.streaming_pipeline import StreamingVoicePipeline, StreamAudioEvent
 from app.voice.vad.turn_detector import TurnDetector, TurnDetectionResult
-from app.voice.vad.providers.energy import EnergyVADProvider
+from app.voice.interruption.cancellation import CancellationToken
+from app.voice.interruption.barge_in import BargeInDetector
 from app.voice.llm.base import LLMMessage
 
 logger = get_logger("api.endpoints")
@@ -21,6 +22,7 @@ router = APIRouter()
 voice_pipeline = BasicVoicePipeline()
 streaming_pipeline = StreamingVoicePipeline()
 turn_detector = TurnDetector()
+barge_in_detector = BargeInDetector()
 
 class TokenRequest(BaseModel):
     room_name: str = Field(..., description="Unique LiveKit room name")
@@ -57,6 +59,14 @@ class VADFrameResponse(BaseModel):
     pause_duration_ms: float
     pause_count: int
 
+class InterruptRequest(BaseModel):
+    reason: Optional[str] = "candidate_barge_in"
+
+class InterruptResponse(BaseModel):
+    interrupted: bool
+    cancellation_latency_ms: float
+    reason: str
+
 @router.get("/health")
 async def health_check() -> Dict[str, Any]:
     """
@@ -72,13 +82,17 @@ async def health_check() -> Dict[str, Any]:
             "llm": settings.LLM_PROVIDER,
             "tts": settings.TTS_PROVIDER,
             "vad": settings.VAD_PROVIDER
+        },
+        "features": {
+            "streaming": True,
+            "barge_in": settings.BARGE_IN_ENABLED
         }
     }
 
 @router.get("/api/voice/status")
 async def voice_status() -> Dict[str, Any]:
     """
-    Returns the configured voice providers, LiveKit status, streaming, and VAD settings.
+    Returns the configured voice providers, LiveKit status, streaming, VAD, and barge-in settings.
     """
     return {
         "livekit_url": settings.LIVEKIT_URL,
@@ -92,6 +106,11 @@ async def voice_status() -> Dict[str, Any]:
             "silence_threshold_ms": settings.VAD_SILENCE_THRESHOLD_MS,
             "min_speech_ms": settings.VAD_MIN_SPEECH_DURATION_MS,
             "pause_tolerance_ms": settings.VAD_MAX_PAUSE_TOLERANCE_MS
+        },
+        "barge_in_settings": {
+            "enabled": settings.BARGE_IN_ENABLED,
+            "min_speech_ms": settings.BARGE_IN_MIN_SPEECH_MS,
+            "energy_threshold": settings.BARGE_IN_ENERGY_THRESHOLD
         },
         "streaming_supported": True,
         "version": settings.VERSION
@@ -181,10 +200,12 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
 @router.websocket("/api/voice/stream/ws")
 async def voice_streaming_websocket(websocket: WebSocket):
     """
-    Full-duplex WebSocket endpoint for real-time streaming voice sessions with VAD events.
+    Full-duplex WebSocket endpoint for real-time streaming voice sessions with VAD and Barge-In support.
     """
     await websocket.accept()
     logger.info("WebSocket voice stream client connected")
+    
+    current_token: Optional[CancellationToken] = None
     
     try:
         while True:
@@ -192,6 +213,16 @@ async def voice_streaming_websocket(websocket: WebSocket):
             data = json.loads(raw_msg)
             
             action = data.get("action", "turn")
+            
+            if action == "interrupt":
+                if current_token and not current_token.is_cancelled:
+                    current_token.cancel(reason=data.get("reason", "client_interrupt"))
+                    await websocket.send_json({
+                        "event_type": "interrupted",
+                        "cancellation_latency_ms": current_token.cancellation_latency_ms
+                    })
+                continue
+
             text = data.get("text")
             audio_b64 = data.get("audio_base64")
             history = data.get("history", [])
@@ -202,12 +233,14 @@ async def voice_streaming_websocket(websocket: WebSocket):
             ]
             
             raw_audio = base64.b64decode(audio_b64) if audio_b64 else None
+            current_token = CancellationToken()
             
-            # Execute streaming turn
+            # Execute streaming turn with cancellation token
             async for event in streaming_pipeline.stream_turn(
                 input_text=text,
                 raw_audio=raw_audio,
-                history=history_msgs
+                history=history_msgs,
+                cancellation_token=current_token
             ):
                 payload = {
                     "event_type": event.event_type,
@@ -224,6 +257,8 @@ async def voice_streaming_websocket(websocket: WebSocket):
                 
     except WebSocketDisconnect:
         logger.info("WebSocket voice stream client disconnected")
+        if current_token and not current_token.is_cancelled:
+            current_token.cancel("client_disconnect")
     except Exception as e:
         logger.error("WebSocket stream error", extra={"error": str(e)})
         try:

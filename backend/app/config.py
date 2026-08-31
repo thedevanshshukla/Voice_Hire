@@ -4,7 +4,7 @@ from pydantic import Field
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "VoiceHire"
-    VERSION: str = "0.4.0"
+    VERSION: str = "0.5.0"
     ENV: str = "development"
     LOG_LEVEL: str = "INFO"
     LOG_JSON: bool = False
@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     VAD_SILENCE_THRESHOLD_MS: int = Field(default=800, description="Silence duration in ms before endpointing turn")
     VAD_MIN_SPEECH_DURATION_MS: int = Field(default=250, description="Minimum speech duration to register turn")
     VAD_MAX_PAUSE_TOLERANCE_MS: int = Field(default=600, description="Pause duration tolerated before evaluating endpoint")
+    
+    # Barge-In / Interruption Settings (v0.5.0)
+    BARGE_IN_ENABLED: bool = Field(default=True, description="Enable natural interruption / barge-in")
+    BARGE_IN_MIN_SPEECH_MS: int = Field(default=120, description="Minimum speech duration during agent turn to trigger barge-in")
+    BARGE_IN_ENERGY_THRESHOLD: float = Field(default=0.02, description="Energy threshold for interruption detection")
     
     # API Keys for Cloud Providers
     OPENAI_API_KEY: Optional[str] = None

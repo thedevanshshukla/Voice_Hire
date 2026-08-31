@@ -9,6 +9,11 @@ interface VoiceMetrics {
   speech_duration_ms?: number;
   pause_count?: number;
   endpointing_delay_ms?: number;
+  interrupted?: boolean;
+  interruption_count?: number;
+  interruption_detection_ms?: number;
+  cancellation_latency_ms?: number;
+  interrupted_at_word?: string;
   total_perceived_ms?: number;
   total_turn_ms?: number;
   total_latency_ms?: number;
@@ -21,6 +26,7 @@ interface TranscriptMessage {
   audioBase64?: string;
   metrics?: VoiceMetrics;
   isStreaming?: boolean;
+  wasInterrupted?: boolean;
   timestamp: string;
 }
 
@@ -45,13 +51,35 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
   const [agentStatus, setAgentStatus] = useState<'idle' | 'listening' | 'thinking' | 'speaking'>('idle');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [activeMetrics, setActiveMetrics] = useState<VoiceMetrics | null>(null);
+  const [lastInterruption, setLastInterruption] = useState<string | null>(null);
 
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const activeAudioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, agentStatus]);
+
+  // Immediately stop active audio playback (Barge-In)
+  const cancelActiveAudio = () => {
+    if (activeAudioRef.current) {
+      activeAudioRef.current.pause();
+      activeAudioRef.current.currentTime = 0;
+      activeAudioRef.current = null;
+    }
+  };
+
+  // Trigger Barge-In / Interruption
+  const handleInterrupt = () => {
+    cancelActiveAudio();
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ action: 'interrupt', reason: 'manual_barge_in' }));
+    }
+    setAgentStatus('listening');
+    setLastInterruption(`🛑 Agent interrupted by candidate`);
+    setTimeout(() => setLastInterruption(null), 3000);
+  };
 
   // Connect to LiveKit session via Token API & setup WebSocket for streaming
   const handleConnect = async () => {
@@ -93,6 +121,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
   };
 
   const handleDisconnect = () => {
+    cancelActiveAudio();
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
@@ -107,15 +136,18 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
   // Play audio from base64 string
   const playAudio = (base64Audio: string) => {
     try {
+      cancelActiveAudio();
       const snd = new Audio(`data:audio/wav;base64,${base64Audio}`);
-      snd.play();
+      activeAudioRef.current = snd;
+      snd.play().catch((e) => console.warn('Audio play prevented:', e));
     } catch (err) {
       console.error('Error playing audio:', err);
     }
   };
 
-  // Process streaming turn over WebSocket
+  // Process streaming turn over WebSocket with Barge-in handling
   const handleSendStreamingTurn = async (textToSend: string) => {
+    cancelActiveAudio();
     const wsUrl = apiUrl.replace(/^http/, 'ws') + '/api/voice/stream/ws';
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
@@ -131,7 +163,6 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
         content: m.text
       }));
 
-      // Add temporary streaming agent message
       setMessages((prev) => [
         ...prev,
         {
@@ -168,6 +199,18 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
           );
         } else if (payload.event_type === 'audio_chunk' && payload.audio_chunk_b64) {
           playAudio(payload.audio_chunk_b64);
+        } else if (payload.event_type === 'interrupted') {
+          cancelActiveAudio();
+          setAgentStatus('listening');
+          setLastInterruption('🛑 Agent Barge-in Cutoff (<150ms)');
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === agentMsgId
+                ? { ...msg, text: fullAgentText + ' [interrupted]', isStreaming: false, wasInterrupted: true }
+                : msg
+            )
+          );
+          setTimeout(() => setLastInterruption(null), 3000);
         } else if (payload.event_type === 'metrics') {
           setActiveMetrics(payload.metrics);
           setMessages((prev) =>
@@ -199,6 +242,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
 
   // Submit voice / text turn to backend
   const handleSendTurn = async (customText?: string) => {
+    cancelActiveAudio();
     const textToSend = customText || inputText;
     if (!textToSend.trim() || isProcessing) return;
 
@@ -288,7 +332,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
               {isConnected ? `Room: ${roomName}` : 'Technical Interview Session'}
             </h3>
             <span className="room-subtitle">
-              {isConnected ? `Connected as ${candidateName} • ${agentStatus.toUpperCase()}` : 'LiveKit WebRTC Natural Turn Taking v0.4.0'}
+              {isConnected ? `Connected as ${candidateName} • ${agentStatus.toUpperCase()}` : 'LiveKit WebRTC Barge-In Support v0.5.0'}
             </span>
           </div>
         </div>
@@ -325,13 +369,19 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
         </div>
       )}
 
+      {lastInterruption && (
+        <div className="interruption-banner">
+          {lastInterruption}
+        </div>
+      )}
+
       {/* Main Room Body */}
       {!isConnected ? (
         <div className="connection-setup-card">
           <div className="setup-icon">🎙️</div>
           <h2>Join Voice Interview Session</h2>
           <p className="setup-description">
-            Experience natural turn taking with VAD endpointing, distinguishing brief candidate thinking pauses from completed answers.
+            Experience natural conversational interviews with real-time barge-in support: interrupt the interviewer naturally at any time.
           </p>
 
           <div className="form-group">
@@ -365,12 +415,21 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
         <div className="active-room-layout">
           {/* Visualizer & Latency Telemetry HUD */}
           <div className="agent-visualizer-card">
-            {/* VAD State Pill */}
-            <div className={`vad-state-pill ${vadState}`}>
-              {vadState === 'speaking' && '🟢 Candidate Speaking (VAD Active)'}
-              {vadState === 'paused' && '🟡 Thinking Pause (Agent Waiting)'}
-              {vadState === 'endpoint' && '🟣 Turn Endpoint Reached'}
-              {vadState === 'idle' && '⚪ Ready / Listening'}
+            <div className="status-row">
+              {/* VAD State Pill */}
+              <div className={`vad-state-pill ${vadState}`}>
+                {vadState === 'speaking' && '🟢 Candidate Speaking'}
+                {vadState === 'paused' && '🟡 Thinking Pause'}
+                {vadState === 'endpoint' && '🟣 Turn Endpoint'}
+                {vadState === 'idle' && '⚪ Ready / Listening'}
+              </div>
+
+              {/* Barge-In Action Button */}
+              {agentStatus === 'speaking' && (
+                <button className="btn-barge-in" onClick={handleInterrupt}>
+                  🛑 Interrupt Agent
+                </button>
+              )}
             </div>
 
             <div className={`waveform-visualizer ${agentStatus}`}>
@@ -385,11 +444,11 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
             <div className="agent-state-label">
               {agentStatus === 'listening' && '👂 Listening to candidate...'}
               {agentStatus === 'thinking' && '⚡ Streaming LLM tokens & TTS chunks...'}
-              {agentStatus === 'speaking' && '🗣️ Agent speaking via streaming audio...'}
+              {agentStatus === 'speaking' && '🗣️ Agent speaking (Candidate can interrupt anytime)...'}
               {agentStatus === 'idle' && 'Ready'}
             </div>
 
-            {/* Live Streaming & VAD Latency HUD */}
+            {/* Live Streaming, VAD, & Barge-In Latency HUD */}
             {activeMetrics && (
               <div className="live-latency-hud">
                 <div className="hud-metric">
@@ -406,8 +465,14 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
                     <span className="hud-val" style={{ color: 'var(--accent-yellow)' }}>{activeMetrics.pause_count}</span>
                   </div>
                 )}
+                {activeMetrics.interrupted && (
+                  <div className="hud-metric">
+                    <span className="hud-label">Cutoff</span>
+                    <span className="hud-val" style={{ color: 'var(--accent-red)' }}>{activeMetrics.cancellation_latency_ms ?? 0}ms</span>
+                  </div>
+                )}
                 <div className="hud-metric">
-                  <span className="hud-label">Perceived Turnaround</span>
+                  <span className="hud-label">Perceived</span>
                   <span className="hud-val perceived">{activeMetrics.total_perceived_ms ?? activeMetrics.total_latency_ms ?? 0}ms</span>
                 </div>
               </div>
@@ -449,6 +514,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
                 <div className="bubble-content">
                   {msg.text}
                   {msg.isStreaming && <span className="typing-cursor">▌</span>}
+                  {msg.wasInterrupted && <span className="interrupted-tag"> [Interrupted]</span>}
                 </div>
                 {msg.metrics && (
                   <div className="latency-badge-row">
@@ -458,8 +524,10 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
                     {msg.metrics.tts_ttfa_ms !== undefined && (
                       <span className="latency-badge">TTFA: {msg.metrics.tts_ttfa_ms}ms</span>
                     )}
-                    {msg.metrics.pause_count !== undefined && (
-                      <span className="latency-badge">Pauses: {msg.metrics.pause_count}</span>
+                    {msg.metrics.interrupted && (
+                      <span className="latency-badge" style={{ color: '#f87171', borderColor: 'rgba(239, 68, 68, 0.4)' }}>
+                        🛑 Cutoff: {msg.metrics.cancellation_latency_ms}ms
+                      </span>
                     )}
                     <span className="latency-badge total">
                       Total: {msg.metrics.total_perceived_ms ?? msg.metrics.total_turn_ms ?? msg.metrics.total_latency_ms}ms
@@ -473,28 +541,39 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
 
           {/* Interaction & Mic Control Bar */}
           <div className="voice-controls-bar">
-            <button
-              className={`mic-toggle-btn ${isMuted ? 'muted' : 'active'}`}
-              onClick={() => setIsMuted(!isMuted)}
-              title={isMuted ? 'Unmute microphone' : 'Mute microphone'}
-            >
-              {isMuted ? '🔇 Muted' : '🎙️ Mic Active'}
-            </button>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <button
+                className={`mic-toggle-btn ${isMuted ? 'muted' : 'active'}`}
+                onClick={() => setIsMuted(!isMuted)}
+                title={isMuted ? 'Unmute microphone' : 'Mute microphone'}
+              >
+                {isMuted ? '🔇 Muted' : '🎙️ Mic Active'}
+              </button>
+
+              {agentStatus === 'speaking' && (
+                <button className="btn-barge-in-sm" onClick={handleInterrupt}>
+                  🛑 Barge-in
+                </button>
+              )}
+            </div>
 
             <div className="quick-replies">
               <button
                 className="chip-btn"
-                onClick={() => handleSendTurn('Let me think... [pause] In Python, the Global Interpreter Lock prevents concurrent bytecode execution.')}
+                onClick={() => {
+                  handleInterrupt();
+                  handleSendTurn('Wait, let me clarify that point regarding Redis clustering.');
+                }}
                 disabled={isProcessing}
               >
-                "Python GIL with pause"
+                "Wait, let me clarify Redis..."
               </button>
               <button
                 className="chip-btn"
-                onClick={() => handleSendTurn('To handle database write scalability, we can use horizontal sharding with consistent hashing.')}
+                onClick={() => handleSendTurn('In microservices, the Saga pattern coordinates distributed transactions without 2PC blocking.')}
                 disabled={isProcessing}
               >
-                "Database sharding answer"
+                "Saga Pattern for transactions"
               </button>
             </div>
 
@@ -509,7 +588,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
                 type="text"
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
-                placeholder="Speak or type technical response..."
+                placeholder="Speak, interrupt, or type response..."
                 className="input-field voice-input"
                 disabled={isProcessing}
               />

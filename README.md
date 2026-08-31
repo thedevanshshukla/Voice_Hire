@@ -11,8 +11,8 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
 - [x] **`v0.1.0` (Project Foundation)**
 - [x] **`v0.2.0` (Basic Voice Pipeline)**
 - [x] **`v0.3.0` (Realtime / Streaming)**
-- [x] **`v0.4.0` (Natural Turn Taking)** ── *Current Release*
-- [ ] `v0.5.0` (Interruption & Barge-In)
+- [x] **`v0.4.0` (Natural Turn Taking)**
+- [x] **`v0.5.0` (Interruption & Barge-In)** ── *Current Release*
 - [ ] `v0.6.0` (Interview Foundation)
 - [ ] `v0.7.0` (Interview State Machine)
 - [ ] `v0.8.0` (Adaptive Question Engine)
@@ -31,14 +31,14 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
 
 ---
 
-## 🏗️ Architecture (v0.4.0)
+## 🏗️ Architecture (v0.5.0)
 
 ```
                     ┌──────────────────────────────┐
                     │      Candidate Browser       │
                     │   React / Vite / TypeScript  │
-                    │  - VAD State Indicator Pill  │
-                    │  - Silence Threshold Slider  │
+                    │  - Instant Audio Cutoff      │
+                    │  - Barge-In Trigger & HUD    │
                     │  - Realtime Token Stream     │
                     └──────────────┬───────────────┘
                                    │
@@ -46,15 +46,19 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
                                    │
                     ┌──────────────▼───────────────┐
                     │       FastAPI Backend        │
-                    │  - /api/voice/vad/process    │
                     │  - WS /api/voice/stream/ws   │
+                    │  - /api/voice/vad/process    │
                     │  - /api/voice/token & /turn  │
                     └──────────────┬───────────────┘
                                    │
-            ┌──────────────────────▼──────────────────────┐
-            │             TurnDetector & VAD              │
-            │  Energy VAD ──► Pause/Speech Classification │
-            │           ──► Endpointing Logic             │
+            ┌──────────────────────┴──────────────────────┐
+            ▼                                             ▼
+     ┌─────────────┐                               ┌─────────────┐
+     │ TurnDetector│                               │ BargeIn     │
+     │ VAD & Pause │                               │ Detector    │
+     │ Endpointing │                               │ Cancel Token│
+     └─────────────┘                               └─────────────┘
+            │                                             │
             └──────────────────────┬──────────────────────┘
                                    │
             ┌──────────────────────▼──────────────────────┐
@@ -66,13 +70,13 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
 
 ---
 
-## ✨ Features (v0.4.0)
+## ✨ Features (v0.5.0)
 
-- **Voice Activity Detection (VAD)**: Energy & RMS based audio frame processing with adaptive background noise floor estimation.
+- **Real-time Barge-In & Interruption**: Interrupt the AI interviewer naturally mid-sentence with sub-200ms audio cancellation and generation abortion.
+- **Async Cooperative Cancellation**: `CancellationToken` pattern tears down active LLM token generators and TTS audio streams without resource leaks.
 - **Natural Turn Taking**: State machine distinguishing intra-turn thinking pauses (< 600ms) from completed answers (≥ 800ms silence).
-- **Spurious Noise Filtering**: Minimum speech duration threshold (250ms) to filter out microphone clicks and coughs.
-- **Turn Telemetry**: Measures active candidate speech duration, intra-turn pause counts, and endpointing delay.
-- **Interactive VAD Visualizer**: Live UI pill (🟢 *Speaking*, 🟡 *Thinking Pause*, 🟣 *Turn Endpoint*) and real-time silence threshold slider.
+- **Comprehensive Latency Telemetry**: Dedicated tracking for TTFT, TTFA, STT latency, barge-in detection latency, and cancellation latency.
+- **Interactive Voice Room UI**: Full-featured React dashboard with live VAD pill, audio waveform, typewriter transcript stream, and barge-in controls.
 
 ---
 
@@ -119,7 +123,9 @@ pytest tests
 - [ADR-002: Modular Voice Provider Abstractions & LiveKit Pipeline](docs/decisions/ADR-002-voice-pipeline.md)
 - [ADR-003: Realtime Streaming Pipeline & Clause-Boundary Chunking](docs/decisions/ADR-003-streaming.md)
 - [ADR-004: Voice Activity Detection & Natural Turn Taking](docs/decisions/ADR-004-turn-detection.md)
+- [ADR-005: Real-time Barge-In & Audio Track Cancellation](docs/decisions/ADR-005-interruption-barge-in.md)
 - [Version 0.1.0 Release Notes](docs/versions/v0.1.md)
 - [Version 0.2.0 Release Notes](docs/versions/v0.2.md)
 - [Version 0.3.0 Release Notes](docs/versions/v0.3.md)
 - [Version 0.4.0 Release Notes](docs/versions/v0.4.md)
+- [Version 0.5.0 Release Notes](docs/versions/v0.5.md)

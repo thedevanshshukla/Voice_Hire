@@ -598,8 +598,62 @@ body {
   border-color: var(--accent-purple);
 }
 
-.vad-state-pill.idle {
-  color: var(--text-muted);
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.btn-barge-in {
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid var(--accent-red);
+  color: #fca5a5;
+  padding: 4px 14px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  animation: pulse-red 1.5s infinite;
+  transition: var(--transition-smooth);
+}
+
+.btn-barge-in:hover {
+  background: rgba(239, 68, 68, 0.4);
+  transform: scale(1.05);
+}
+
+.btn-barge-in-sm {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #f87171;
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+}
+
+.btn-barge-in-sm:hover {
+  background: rgba(239, 68, 68, 0.3);
+}
+
+.interruption-banner {
+  padding: 10px 24px;
+  background: rgba(239, 68, 68, 0.2);
+  border-bottom: 1px solid rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  animation: fade-in-up 0.2s ease-out;
+}
+
+.interrupted-tag {
+  color: #f87171;
+  font-size: 12px;
+  font-weight: bold;
+  font-style: italic;
 }
 
 .vad-settings-bar {
