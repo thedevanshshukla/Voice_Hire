@@ -63,6 +63,30 @@ class SessionScorecard(BaseModel):
     top_strengths: List[str] = Field(default_factory=list)
     areas_for_improvement: List[str] = Field(default_factory=list)
 
+class EvidenceSnippet(BaseModel):
+    quote: str = Field(..., description="Verbatim quote from candidate transcript")
+    topic: str = "General"
+    stage: str = "core_concepts"
+    dimension: str = "Technical Depth"
+    rationale: str = ""
+
+class RedFlagItem(BaseModel):
+    category: str = Field(..., description="e.g. UNSUPPORTED_CLAIM, FATAL_MISCONCEPTION, FAILURE_IGNORANCE")
+    quote: str = Field(..., description="Verbatim quote triggering the red flag")
+    severity: str = Field(default="MEDIUM", description="LOW, MEDIUM, HIGH, CRITICAL")
+    explanation: str = ""
+
+class EvidenceEvaluationReport(BaseModel):
+    session_id: str
+    candidate_name: str
+    confidence_score: float = Field(default=0.8, ge=0.0, le=1.0, description="Confidence in evaluation based on sample depth")
+    recommendation: str = Field(default="HIRE", description="STRONG_HIRE, HIRE, BORDERLINE, NO_HIRE")
+    recommendation_reasoning: str = ""
+    key_strengths_with_evidence: List[EvidenceSnippet] = Field(default_factory=list)
+    key_weaknesses_with_evidence: List[EvidenceSnippet] = Field(default_factory=list)
+    red_flags: List[RedFlagItem] = Field(default_factory=list)
+    generated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
 class InterviewConfig(BaseModel):
     role: InterviewRole = InterviewRole.BACKEND
     experience_level: ExperienceLevel = ExperienceLevel.MID
@@ -109,6 +133,7 @@ class InterviewSession(BaseModel):
     })
     topic_coverage: Dict[str, Dict[str, Any]] = Field(default_factory=dict, description="Questions asked & depth scores per topic")
     scorecard: Optional[SessionScorecard] = Field(default_factory=SessionScorecard, description="Cumulative multi-dimensional scorecard")
+    evidence_report: Optional[EvidenceEvaluationReport] = Field(None, description="Evidence-backed hiring audit report")
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     started_at: Optional[str] = None
     completed_at: Optional[str] = None

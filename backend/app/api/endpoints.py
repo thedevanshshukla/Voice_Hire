@@ -17,13 +17,14 @@ from app.voice.llm.base import LLMMessage
 from app.models.interview import (
     InterviewSession, InterviewConfig, InterviewRole, ExperienceLevel,
     InterviewLanguage, InterviewTopic, InterviewStage, TranscriptEntry,
-    SessionStatus, TurnEvaluation, SessionScorecard
+    SessionStatus, TurnEvaluation, SessionScorecard, EvidenceEvaluationReport
 )
 from app.db.mongo import InterviewSessionRepository
 from app.interview.prompt_builder import InterviewPromptBuilder
 from app.interview.state_machine import InterviewStateMachine, STAGE_SEQUENCE, STAGE_DISPLAY_NAMES
 from app.interview.adaptive_engine import AdaptiveQuestionEngine, AdaptiveAction
 from app.interview.evaluation_engine import AnswerEvaluator
+from app.interview.evidence_engine import EvidenceEvaluator
 
 logger = get_logger("api.endpoints")
 router = APIRouter()
@@ -70,6 +71,7 @@ class VoiceTurnResponse(BaseModel):
     evaluated_depth: Optional[str] = None
     turn_evaluation: Optional[TurnEvaluation] = None
     scorecard: Optional[SessionScorecard] = None
+    evidence_report: Optional[EvidenceEvaluationReport] = None
     topic_coverage: Optional[Dict[str, Any]] = None
     metrics: Dict[str, Any]
 
@@ -136,6 +138,30 @@ async def get_session_scorecard(session_id: str) -> SessionScorecard:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
     return session.scorecard or SessionScorecard()
 
+@router.get("/api/interview/session/{session_id}/evidence-report", response_model=EvidenceEvaluationReport)
+async def get_evidence_report(session_id: str) -> EvidenceEvaluationReport:
+    session = await InterviewSessionRepository.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    
+    if session.evidence_report:
+        return session.evidence_report
+    
+    # Generate on-demand
+    report = EvidenceEvaluator.extract_evidence_report(session)
+    await InterviewSessionRepository.update_session(session_id, {"evidence_report": report.model_dump()})
+    return report
+
+@router.post("/api/interview/session/{session_id}/generate-evidence", response_model=EvidenceEvaluationReport)
+async def generate_evidence_report(session_id: str) -> EvidenceEvaluationReport:
+    session = await InterviewSessionRepository.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    
+    report = EvidenceEvaluator.extract_evidence_report(session)
+    await InterviewSessionRepository.update_session(session_id, {"evidence_report": report.model_dump()})
+    return report
+
 @router.get("/api/interview/sessions", response_model=List[InterviewSession])
 async def list_interview_sessions(candidate_id: Optional[str] = None, limit: int = 20) -> List[InterviewSession]:
     return await InterviewSessionRepository.list_sessions(candidate_id=candidate_id, limit=limit)
@@ -163,7 +189,8 @@ async def health_check() -> Dict[str, Any]:
             "interview_foundation": True,
             "interview_state_machine": True,
             "adaptive_question_engine": True,
-            "answer_evaluation": True
+            "answer_evaluation": True,
+            "evidence_based_evaluation": True
         }
     }
 
@@ -251,6 +278,7 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
         progress_pct = 16.6
         adaptive_action = None
         turn_eval = None
+        evidence_report = None
         
         if req.session_id:
             session = await InterviewSessionRepository.get_session(req.session_id)
@@ -320,9 +348,11 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
             session.stage_turn_counts = sm.stage_turn_counts
             session.topic_coverage = ae.topic_stats if 'ae' in locals() else {}
 
-            # Aggregate cumulative scorecard
+            # Aggregate cumulative scorecard & evidence report
             all_evals = [t.evaluation for t in session.transcripts if t.evaluation is not None]
             session.scorecard = AnswerEvaluator.aggregate_scorecard(all_evals)
+            session.evidence_report = EvidenceEvaluator.extract_evidence_report(session)
+            evidence_report = session.evidence_report
 
             await InterviewSessionRepository.update_session(session.session_id, {
                 "transcripts": [t.model_dump() for t in session.transcripts],
@@ -330,7 +360,8 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
                 "current_stage": session.current_stage.value,
                 "stage_turn_counts": session.stage_turn_counts,
                 "topic_coverage": session.topic_coverage,
-                "scorecard": session.scorecard.model_dump()
+                "scorecard": session.scorecard.model_dump(),
+                "evidence_report": session.evidence_report.model_dump()
             })
 
         return VoiceTurnResponse(
@@ -345,6 +376,7 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
             evaluated_depth=adaptive_action.evaluated_depth.value if adaptive_action else None,
             turn_evaluation=turn_eval,
             scorecard=session.scorecard if session else None,
+            evidence_report=evidence_report,
             topic_coverage=session.topic_coverage if session else None,
             metrics=turn_result.metrics.model_dump()
         )
@@ -358,7 +390,7 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
 @router.websocket("/api/voice/stream/ws")
 async def voice_streaming_websocket(websocket: WebSocket):
     """
-    Full-duplex WebSocket endpoint for real-time streaming voice sessions with Answer Evaluation.
+    Full-duplex WebSocket endpoint for real-time streaming voice sessions with Answer & Evidence Evaluation.
     """
     await websocket.accept()
     logger.info("WebSocket voice stream client connected")

@@ -46,6 +46,33 @@ interface SessionScorecard {
   areas_for_improvement: string[];
 }
 
+interface EvidenceSnippet {
+  quote: string;
+  topic: string;
+  stage: string;
+  dimension: string;
+  rationale: string;
+}
+
+interface RedFlagItem {
+  category: string;
+  quote: string;
+  severity: string;
+  explanation: string;
+}
+
+interface EvidenceEvaluationReport {
+  session_id: string;
+  candidate_name: string;
+  confidence_score: number;
+  recommendation: string;
+  recommendation_reasoning: string;
+  key_strengths_with_evidence: EvidenceSnippet[];
+  key_weaknesses_with_evidence: EvidenceSnippet[];
+  red_flags: RedFlagItem[];
+  generated_at: string;
+}
+
 interface TranscriptMessage {
   id: string;
   role: 'candidate' | 'interviewer';
@@ -90,6 +117,8 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
   const [adaptiveStrategy, setAdaptiveStrategy] = useState<string | null>(null);
   
   const [sessionScorecard, setSessionScorecard] = useState<SessionScorecard | null>(null);
+  const [evidenceReport, setEvidenceReport] = useState<EvidenceEvaluationReport | null>(null);
+  const [modalTab, setModalTab] = useState<'scorecard' | 'evidence'>('scorecard');
   const [latestTurnScore, setLatestTurnScore] = useState<number | null>(null);
   const [showScorecardModal, setShowScorecardModal] = useState<boolean>(false);
 
@@ -117,17 +146,24 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, agentStatus]);
 
-  // Fetch updated session scorecard
-  const refreshScorecard = async () => {
+  // Fetch updated session scorecard & evidence report
+  const refreshScorecardAndEvidence = async () => {
     if (!activeSession) return;
     try {
-      const res = await fetch(`${apiUrl}/api/interview/session/${activeSession.session_id}/scorecard`);
-      if (res.ok) {
-        const sc = await res.json();
+      const [scRes, evRes] = await Promise.all([
+        fetch(`${apiUrl}/api/interview/session/${activeSession.session_id}/scorecard`),
+        fetch(`${apiUrl}/api/interview/session/${activeSession.session_id}/evidence-report`)
+      ]);
+      if (scRes.ok) {
+        const sc = await scRes.json();
         setSessionScorecard(sc);
       }
+      if (evRes.ok) {
+        const ev = await evRes.json();
+        setEvidenceReport(ev);
+      }
     } catch (err) {
-      console.warn('Could not refresh scorecard:', err);
+      console.warn('Could not refresh scorecard/evidence:', err);
     }
   };
 
@@ -219,7 +255,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
     }
   };
 
-  // Process streaming turn over WebSocket with Answer Evaluation
+  // Process streaming turn over WebSocket with Answer & Evidence Evaluation
   const handleSendStreamingTurn = async (textToSend: string, userMsgId: string) => {
     cancelActiveAudio();
     const wsUrl = apiUrl.replace(/^http/, 'ws') + '/api/voice/stream/ws';
@@ -276,7 +312,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
               msg.id === userMsgId ? { ...msg, evaluation: ev } : msg
             )
           );
-          refreshScorecard();
+          refreshScorecardAndEvidence();
         } else if (payload.event_type === 'vad_event') {
           if (payload.vad_status === 'candidate_speaking') setVadState('speaking');
           else if (payload.vad_status === 'candidate_paused') setVadState('paused');
@@ -403,6 +439,9 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
       if (data.scorecard) {
         setSessionScorecard(data.scorecard);
       }
+      if (data.evidence_report) {
+        setEvidenceReport(data.evidence_report);
+      }
 
       const agentMsg: TranscriptMessage = {
         id: `agent-${Date.now()}`,
@@ -453,7 +492,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
               )}
             </div>
             <span className="room-subtitle">
-              {isConnected ? `Candidate: ${candidateName} • ${agentStatus.toUpperCase()}` : 'LiveKit WebRTC Answer Evaluation Engine v0.9.0'}
+              {isConnected ? `Candidate: ${candidateName} • ${agentStatus.toUpperCase()}` : 'LiveKit WebRTC Evidence-Based Evaluation v0.10.0'}
             </span>
           </div>
         </div>
@@ -472,11 +511,11 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
             <button 
               className="btn btn-secondary btn-scorecard-btn"
               onClick={() => {
-                refreshScorecard();
+                refreshScorecardAndEvidence();
                 setShowScorecardModal(true);
               }}
             >
-              <span>📊 Scorecard</span>
+              <span>📊 Scorecard & Evidence</span>
               {sessionScorecard && (
                 <span className="scorecard-tag">{sessionScorecard.overall_score.toFixed(1)}</span>
               )}
@@ -558,109 +597,197 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
         </div>
       )}
 
-      {/* Live Scorecard Modal */}
+      {/* Live Scorecard & Evidence Report Modal */}
       {showScorecardModal && (
         <div className="scorecard-modal-backdrop" onClick={() => setShowScorecardModal(false)}>
           <div className="scorecard-modal" onClick={(e) => e.stopPropagation()}>
             <div className="scorecard-modal-header">
               <div>
-                <h3>Technical Evaluation Scorecard</h3>
+                <h3>Evaluation & Evidence Audit</h3>
                 <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
                   {activeSession?.config.role} • {candidateName}
                 </span>
               </div>
-              <button className="btn-close" onClick={() => setShowScorecardModal(false)}>✕</button>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <div className="modal-tabs">
+                  <button 
+                    className={`tab-btn ${modalTab === 'scorecard' ? 'active' : ''}`}
+                    onClick={() => setModalTab('scorecard')}
+                  >
+                    Scorecard
+                  </button>
+                  <button 
+                    className={`tab-btn ${modalTab === 'evidence' ? 'active' : ''}`}
+                    onClick={() => setModalTab('evidence')}
+                  >
+                    Evidence & Red Flags ({evidenceReport?.red_flags?.length || 0})
+                  </button>
+                </div>
+                <button className="btn-close" onClick={() => setShowScorecardModal(false)}>✕</button>
+              </div>
             </div>
 
             <div className="scorecard-modal-body">
-              <div className="scorecard-hero">
-                <div className="hero-score-val">
-                  {sessionScorecard?.overall_score.toFixed(1) || '0.0'}
-                  <span style={{ fontSize: '14px', color: 'var(--text-muted)' }}>/ 5.0</span>
-                </div>
-                <div className="hero-verdict">
-                  <div className="verdict-label">Verdict</div>
-                  <div className="verdict-title">{sessionScorecard?.summary_verdict || 'In Progress'}</div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                    {sessionScorecard?.total_evaluated_turns || 0} technical answers evaluated
+              {modalTab === 'scorecard' ? (
+                <>
+                  <div className="scorecard-hero">
+                    <div className="hero-score-val">
+                      {sessionScorecard?.overall_score.toFixed(1) || '0.0'}
+                      <span style={{ fontSize: '14px', color: 'var(--text-muted)' }}>/ 5.0</span>
+                    </div>
+                    <div className="hero-verdict">
+                      <div className="verdict-label">Verdict</div>
+                      <div className="verdict-title">{sessionScorecard?.summary_verdict || 'In Progress'}</div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                        {sessionScorecard?.total_evaluated_turns || 0} technical answers evaluated
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
 
-              {/* 5-Dimensional Radar Progress Bars */}
-              <div className="dimensions-breakdown">
-                <h4>Dimensional Breakdown</h4>
-                
-                <div className="dim-row">
-                  <div className="dim-header">
-                    <span>1. Technical Correctness</span>
-                    <span className="dim-val">{sessionScorecard?.avg_correctness.toFixed(1) || '0.0'} / 5.0</span>
-                  </div>
-                  <div className="dim-bar-bg">
-                    <div className="dim-bar-fill" style={{ width: `${((sessionScorecard?.avg_correctness || 0) / 5) * 100}%` }}></div>
-                  </div>
-                </div>
+                  {/* 5-Dimensional Radar Progress Bars */}
+                  <div className="dimensions-breakdown">
+                    <h4>Dimensional Breakdown</h4>
+                    
+                    <div className="dim-row">
+                      <div className="dim-header">
+                        <span>1. Technical Correctness</span>
+                        <span className="dim-val">{sessionScorecard?.avg_correctness.toFixed(1) || '0.0'} / 5.0</span>
+                      </div>
+                      <div className="dim-bar-bg">
+                        <div className="dim-bar-fill" style={{ width: `${((sessionScorecard?.avg_correctness || 0) / 5) * 100}%` }}></div>
+                      </div>
+                    </div>
 
-                <div className="dim-row">
-                  <div className="dim-header">
-                    <span>2. Depth & Mechanics</span>
-                    <span className="dim-val">{sessionScorecard?.avg_depth.toFixed(1) || '0.0'} / 5.0</span>
-                  </div>
-                  <div className="dim-bar-bg">
-                    <div className="dim-bar-fill" style={{ width: `${((sessionScorecard?.avg_depth || 0) / 5) * 100}%`, background: 'var(--accent-purple)' }}></div>
-                  </div>
-                </div>
+                    <div className="dim-row">
+                      <div className="dim-header">
+                        <span>2. Depth & Mechanics</span>
+                        <span className="dim-val">{sessionScorecard?.avg_depth.toFixed(1) || '0.0'} / 5.0</span>
+                      </div>
+                      <div className="dim-bar-bg">
+                        <div className="dim-bar-fill" style={{ width: `${((sessionScorecard?.avg_depth || 0) / 5) * 100}%`, background: 'var(--accent-purple)' }}></div>
+                      </div>
+                    </div>
 
-                <div className="dim-row">
-                  <div className="dim-header">
-                    <span>3. Trade-off Awareness</span>
-                    <span className="dim-val">{sessionScorecard?.avg_tradeoffs.toFixed(1) || '0.0'} / 5.0</span>
-                  </div>
-                  <div className="dim-bar-bg">
-                    <div className="dim-bar-fill" style={{ width: `${((sessionScorecard?.avg_tradeoffs || 0) / 5) * 100}%`, background: 'var(--accent-green)' }}></div>
-                  </div>
-                </div>
+                    <div className="dim-row">
+                      <div className="dim-header">
+                        <span>3. Trade-off Awareness</span>
+                        <span className="dim-val">{sessionScorecard?.avg_tradeoffs.toFixed(1) || '0.0'} / 5.0</span>
+                      </div>
+                      <div className="dim-bar-bg">
+                        <div className="dim-bar-fill" style={{ width: `${((sessionScorecard?.avg_tradeoffs || 0) / 5) * 100}%`, background: 'var(--accent-green)' }}></div>
+                      </div>
+                    </div>
 
-                <div className="dim-row">
-                  <div className="dim-header">
-                    <span>4. Practical vs Theory</span>
-                    <span className="dim-val">{sessionScorecard?.avg_practical.toFixed(1) || '0.0'} / 5.0</span>
-                  </div>
-                  <div className="dim-bar-bg">
-                    <div className="dim-bar-fill" style={{ width: `${((sessionScorecard?.avg_practical || 0) / 5) * 100}%`, background: 'var(--accent-yellow)' }}></div>
-                  </div>
-                </div>
+                    <div className="dim-row">
+                      <div className="dim-header">
+                        <span>4. Practical vs Theory</span>
+                        <span className="dim-val">{sessionScorecard?.avg_practical.toFixed(1) || '0.0'} / 5.0</span>
+                      </div>
+                      <div className="dim-bar-bg">
+                        <div className="dim-bar-fill" style={{ width: `${((sessionScorecard?.avg_practical || 0) / 5) * 100}%`, background: 'var(--accent-yellow)' }}></div>
+                      </div>
+                    </div>
 
-                <div className="dim-row">
-                  <div className="dim-header">
-                    <span>5. Communication Clarity</span>
-                    <span className="dim-val">{sessionScorecard?.avg_clarity.toFixed(1) || '0.0'} / 5.0</span>
+                    <div className="dim-row">
+                      <div className="dim-header">
+                        <span>5. Communication Clarity</span>
+                        <span className="dim-val">{sessionScorecard?.avg_clarity.toFixed(1) || '0.0'} / 5.0</span>
+                      </div>
+                      <div className="dim-bar-bg">
+                        <div className="dim-bar-fill" style={{ width: `${((sessionScorecard?.avg_clarity || 0) / 5) * 100}%`, background: 'var(--accent-blue)' }}></div>
+                      </div>
+                    </div>
                   </div>
-                  <div className="dim-bar-bg">
-                    <div className="dim-bar-fill" style={{ width: `${((sessionScorecard?.avg_clarity || 0) / 5) * 100}%`, background: 'var(--accent-blue)' }}></div>
-                  </div>
-                </div>
-              </div>
 
-              {/* Strengths & Gaps */}
-              <div className="scorecard-notes-grid">
-                <div className="notes-box strengths">
-                  <h5>🌟 Top Strengths</h5>
-                  <ul>
-                    {sessionScorecard?.top_strengths?.map((s, idx) => (
-                      <li key={idx}>{s}</li>
-                    )) || <li>Evaluating answers...</li>}
-                  </ul>
+                  {/* Strengths & Gaps */}
+                  <div className="scorecard-notes-grid">
+                    <div className="notes-box strengths">
+                      <h5>🌟 Top Strengths</h5>
+                      <ul>
+                        {sessionScorecard?.top_strengths?.map((s, idx) => (
+                          <li key={idx}>{s}</li>
+                        )) || <li>Evaluating answers...</li>}
+                      </ul>
+                    </div>
+                    <div className="notes-box gaps">
+                      <h5>⚠️ Areas for Growth</h5>
+                      <ul>
+                        {sessionScorecard?.areas_for_improvement?.map((g, idx) => (
+                          <li key={idx}>{g}</li>
+                        )) || <li>Evaluating answers...</li>}
+                      </ul>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                /* Evidence & Red Flags Tab */
+                <div className="evidence-tab-content">
+                  {/* Executive Summary Card */}
+                  <div className="evidence-executive-card">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                      <span className={`recommendation-badge ${evidenceReport?.recommendation?.toLowerCase()}`}>
+                        {evidenceReport?.recommendation || 'EVALUATING'}
+                      </span>
+                      <span className="confidence-tag">
+                        🎯 {Math.round((evidenceReport?.confidence_score || 0.8) * 100)}% Confidence
+                      </span>
+                    </div>
+                    <p className="recommendation-reasoning">
+                      {evidenceReport?.recommendation_reasoning || 'Conducting turn evaluations to gather transcript evidence.'}
+                    </p>
+                  </div>
+
+                  {/* Red Flags Section */}
+                  {evidenceReport?.red_flags && evidenceReport.red_flags.length > 0 && (
+                    <div className="red-flags-section">
+                      <h4 style={{ color: '#f87171', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        🚩 Detected Technical Red Flags ({evidenceReport.red_flags.length})
+                      </h4>
+                      <div className="red-flags-grid">
+                        {evidenceReport.red_flags.map((rf, idx) => (
+                          <div key={idx} className="red-flag-card">
+                            <div className="red-flag-top">
+                              <span className={`severity-badge ${rf.severity.toLowerCase()}`}>{rf.severity}</span>
+                              <span className="flag-category">{rf.category}</span>
+                            </div>
+                            <div className="flag-quote">"{rf.quote}"</div>
+                            <div className="flag-explanation">⚠️ {rf.explanation}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Transcript Quotation Citations */}
+                  <div className="evidence-quotes-section">
+                    <h4>💬 Verbatim Transcript Citations</h4>
+                    
+                    <div className="evidence-quotes-grid">
+                      {evidenceReport?.key_strengths_with_evidence?.map((snip, idx) => (
+                        <div key={idx} className="quote-evidence-card strength">
+                          <div className="quote-header">
+                            <span className="quote-tag strength">STRENGTH • {snip.dimension}</span>
+                            <span className="quote-stage">{snip.stage}</span>
+                          </div>
+                          <div className="quote-body">"{snip.quote}"</div>
+                          <div className="quote-rationale">✓ {snip.rationale}</div>
+                        </div>
+                      ))}
+
+                      {evidenceReport?.key_weaknesses_with_evidence?.map((snip, idx) => (
+                        <div key={idx} className="quote-evidence-card gap">
+                          <div className="quote-header">
+                            <span className="quote-tag gap">GAP • {snip.dimension}</span>
+                            <span className="quote-stage">{snip.stage}</span>
+                          </div>
+                          <div className="quote-body">"{snip.quote}"</div>
+                          <div className="quote-rationale">⚠️ {snip.rationale}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
-                <div className="notes-box gaps">
-                  <h5>⚠️ Areas for Growth</h5>
-                  <ul>
-                    {sessionScorecard?.areas_for_improvement?.map((g, idx) => (
-                      <li key={idx}>{g}</li>
-                    )) || <li>Evaluating answers...</li>}
-                  </ul>
-                </div>
-              </div>
+              )}
             </div>
           </div>
         </div>
@@ -672,7 +799,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
           <div className="setup-icon">🎙️</div>
           <h2>Launch Interview Session</h2>
           <p className="setup-description">
-            Connecting to LiveKit WebRTC channel with Answer Evaluation Engine and multi-dimensional scoring.
+            Connecting to LiveKit WebRTC channel with Evidence-Based Evaluation and red flag detection.
           </p>
 
           <div className="form-group">
@@ -729,6 +856,13 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                 </div>
               )}
 
+              {/* Red Flag Badge if detected */}
+              {evidenceReport?.red_flags && evidenceReport.red_flags.length > 0 && (
+                <div className="red-flag-hud-pill">
+                  🚩 {evidenceReport.red_flags.length} Flag{evidenceReport.red_flags.length > 1 ? 's' : ''}
+                </div>
+              )}
+
               {/* Barge-In Action Button */}
               {agentStatus === 'speaking' && (
                 <button className="btn-barge-in" onClick={handleInterrupt}>
@@ -748,7 +882,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
             </div>
             <div className="agent-state-label">
               {agentStatus === 'listening' && '👂 Listening to candidate...'}
-              {agentStatus === 'thinking' && '⚡ Evaluating depth & scoring answer dimensions...'}
+              {agentStatus === 'thinking' && '⚡ Extracting evidence quotes & verifying technical claims...'}
               {agentStatus === 'speaking' && '🗣️ Agent speaking (Candidate can interrupt anytime)...'}
               {agentStatus === 'idle' && 'Ready'}
             </div>
@@ -886,10 +1020,10 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
               </button>
               <button
                 className="chip-btn"
-                onClick={() => handleSendTurn('We used Redis for caching to speed up the database reads.')}
+                onClick={() => handleSendTurn('We had zero latency and 100% ACID consistency across microservices because network never fails.')}
                 disabled={isProcessing}
               >
-                "Shallow: We used Redis for caching"
+                "Red Flag: Zero latency & reliable network"
               </button>
             </div>
 
