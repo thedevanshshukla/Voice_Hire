@@ -4,7 +4,7 @@ from pydantic import Field
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "VoiceHire"
-    VERSION: str = "0.3.0"
+    VERSION: str = "0.4.0"
     ENV: str = "development"
     LOG_LEVEL: str = "INFO"
     LOG_JSON: bool = False
@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     STT_PROVIDER: str = Field(default="mock", description="Default STT provider: mock, deepgram")
     LLM_PROVIDER: str = Field(default="mock", description="Default LLM provider: mock, openai, gemini")
     TTS_PROVIDER: str = Field(default="mock", description="Default TTS provider: mock, elevenlabs, deepgram")
+    
+    # VAD & Turn Taking Settings
+    VAD_PROVIDER: str = Field(default="energy", description="Default VAD provider: energy, mock")
+    VAD_SILENCE_THRESHOLD_MS: int = Field(default=800, description="Silence duration in ms before endpointing turn")
+    VAD_MIN_SPEECH_DURATION_MS: int = Field(default=250, description="Minimum speech duration to register turn")
+    VAD_MAX_PAUSE_TOLERANCE_MS: int = Field(default=600, description="Pause duration tolerated before evaluating endpoint")
     
     # API Keys for Cloud Providers
     OPENAI_API_KEY: Optional[str] = None

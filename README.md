@@ -10,8 +10,8 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
 
 - [x] **`v0.1.0` (Project Foundation)**
 - [x] **`v0.2.0` (Basic Voice Pipeline)**
-- [x] **`v0.3.0` (Realtime / Streaming)** ── *Current Release*
-- [ ] `v0.4.0` (Natural Turn Taking)
+- [x] **`v0.3.0` (Realtime / Streaming)**
+- [x] **`v0.4.0` (Natural Turn Taking)** ── *Current Release*
 - [ ] `v0.5.0` (Interruption & Barge-In)
 - [ ] `v0.6.0` (Interview Foundation)
 - [ ] `v0.7.0` (Interview State Machine)
@@ -31,26 +31,33 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
 
 ---
 
-## 🏗️ Architecture (v0.3.0)
+## 🏗️ Architecture (v0.4.0)
 
 ```
                     ┌──────────────────────────────┐
                     │      Candidate Browser       │
                     │   React / Vite / TypeScript  │
+                    │  - VAD State Indicator Pill  │
+                    │  - Silence Threshold Slider  │
                     │  - Realtime Token Stream     │
-                    │  - Latency HUD (TTFT / TTFA) │
                     └──────────────┬───────────────┘
                                    │
                       WebSocket / REST / WebRTC
                                    │
                     ┌──────────────▼───────────────┐
                     │       FastAPI Backend        │
+                    │  - /api/voice/vad/process    │
                     │  - WS /api/voice/stream/ws   │
                     │  - /api/voice/token & /turn  │
-                    │  - /health & /voice/status   │
                     └──────────────┬───────────────┘
                                    │
-            ┌──────────────────────┴──────────────────────┐
+            ┌──────────────────────▼──────────────────────┐
+            │             TurnDetector & VAD              │
+            │  Energy VAD ──► Pause/Speech Classification │
+            │           ──► Endpointing Logic             │
+            └──────────────────────┬──────────────────────┘
+                                   │
+            ┌──────────────────────▼──────────────────────┐
             │         Streaming Voice Pipeline            │
             │  STT -> LLM Token Stream -> Sentence Chunker│
             │           -> Streaming TTS Audio            │
@@ -59,13 +66,13 @@ VoiceHire is a production-oriented realtime Voice AI technical interviewer desig
 
 ---
 
-## ✨ Features (v0.3.0)
+## ✨ Features (v0.4.0)
 
-- **Continuous Streaming Voice Pipeline**: Synthesizes early sentence clauses concurrently with ongoing LLM generation to achieve conversational responsiveness.
-- **Precision Latency Telemetry**: Dedicated tracking for Time-to-First-Token (TTFT), Time-to-First-Audio (TTFA), STT latency, and total perceived turnaround.
-- **Full-Duplex WebSocket Endpoint**: `/api/voice/stream/ws` for bidirectional token, audio chunk, and event streaming.
-- **Live Latency HUD & Typewriter UI**: Real-time metrics display and typewriter animation on conversation transcripts.
-- **Multi-Cloud Verified**: Verified with Deepgram Nova-2 STT / Aura TTS, OpenAI GPT-4o, Google Gemini, and ElevenLabs.
+- **Voice Activity Detection (VAD)**: Energy & RMS based audio frame processing with adaptive background noise floor estimation.
+- **Natural Turn Taking**: State machine distinguishing intra-turn thinking pauses (< 600ms) from completed answers (≥ 800ms silence).
+- **Spurious Noise Filtering**: Minimum speech duration threshold (250ms) to filter out microphone clicks and coughs.
+- **Turn Telemetry**: Measures active candidate speech duration, intra-turn pause counts, and endpointing delay.
+- **Interactive VAD Visualizer**: Live UI pill (🟢 *Speaking*, 🟡 *Thinking Pause*, 🟣 *Turn Endpoint*) and real-time silence threshold slider.
 
 ---
 
@@ -111,6 +118,8 @@ pytest tests
 - [ADR-001: Project Foundation Stack & Architecture](docs/decisions/ADR-001-project-foundation.md)
 - [ADR-002: Modular Voice Provider Abstractions & LiveKit Pipeline](docs/decisions/ADR-002-voice-pipeline.md)
 - [ADR-003: Realtime Streaming Pipeline & Clause-Boundary Chunking](docs/decisions/ADR-003-streaming.md)
+- [ADR-004: Voice Activity Detection & Natural Turn Taking](docs/decisions/ADR-004-turn-detection.md)
 - [Version 0.1.0 Release Notes](docs/versions/v0.1.md)
 - [Version 0.2.0 Release Notes](docs/versions/v0.2.md)
 - [Version 0.3.0 Release Notes](docs/versions/v0.3.md)
+- [Version 0.4.0 Release Notes](docs/versions/v0.4.md)

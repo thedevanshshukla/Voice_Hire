@@ -10,6 +10,7 @@ interface HealthStatus {
     stt: string;
     llm: string;
     tts: string;
+    vad?: string;
   };
 }
 
@@ -71,19 +72,19 @@ function App() {
         ) : (
           <>
             <section className="hero-section">
-              <div className="badge">Phase 2 Active • Realtime / Streaming (v0.3.0)</div>
+              <div className="badge">Phase 3 Active • Natural Turn Taking (v0.4.0)</div>
               <h1 className="hero-title">
                 Realtime Voice AI<br />Technical Interviewer
               </h1>
               <p className="hero-subtitle">
-                VoiceHire conducts ultra low-latency adaptive technical interviews, challenging software developers with 
-                continuous token streaming, early TTS sentence chunking, and live latency telemetry.
+                VoiceHire conducts human-like conversational technical interviews, equipped with Voice Activity Detection (VAD) 
+                to respect candidate thinking pauses without premature interruption.
               </p>
 
               <div className="btn-container">
                 <button className="btn btn-primary" onClick={() => setIsVoiceRoomOpen(true)}>
-                  <span>Launch Streaming Interview</span>
-                  <span>⚡</span>
+                  <span>Launch Voice Interview</span>
+                  <span>🎙️</span>
                 </button>
                 <a 
                   href="https://livekit.io" 
@@ -95,13 +96,14 @@ function App() {
                 </a>
               </div>
 
-              {/* Providers Status Card */}
+              {/* Providers & VAD Status Banner */}
               {backendHealth?.providers && (
                 <div className="providers-info-banner">
                   <span className="provider-tag">STT: <strong>{backendHealth.providers.stt}</strong></span>
                   <span className="provider-tag">LLM: <strong>{backendHealth.providers.llm}</strong></span>
                   <span className="provider-tag">TTS: <strong>{backendHealth.providers.tts}</strong></span>
-                  <span className="provider-tag" style={{ color: 'var(--accent-green)' }}>⚡ Streaming: <strong>Active</strong></span>
+                  <span className="provider-tag">VAD: <strong>{backendHealth.providers.vad || 'energy'}</strong></span>
+                  <span className="provider-tag" style={{ color: 'var(--accent-green)' }}>⚡ Endpointing: <strong>Active</strong></span>
                 </div>
               )}
             </section>
@@ -110,25 +112,25 @@ function App() {
             <section className="features-grid">
               <div className="feature-card">
                 <div className="feature-icon">⚡</div>
-                <h3 className="feature-title">Streaming Pipeline (v0.3.0)</h3>
+                <h3 className="feature-title">Natural Turn Taking (v0.4.0)</h3>
                 <p className="feature-desc">
-                  Sub-second conversational response: LLM tokens are buffered at clause boundaries and piped concurrently to streaming TTS.
-                </p>
-              </div>
-
-              <div className="feature-card">
-                <div className="feature-icon">📊</div>
-                <h3 className="feature-title">TTFT & TTFA Telemetry</h3>
-                <p className="feature-desc">
-                  Real-time telemetry tracking Time-to-First-Token, Time-to-First-Audio, and perceived conversational latency.
+                  Intelligent endpointing engine that distinguishes between mid-sentence candidate thinking pauses and completed answers.
                 </p>
               </div>
 
               <div className="feature-card">
                 <div className="feature-icon">🎙️</div>
-                <h3 className="feature-title">LiveKit WebRTC</h3>
+                <h3 className="feature-title">Adaptive VAD</h3>
                 <p className="feature-desc">
-                  Seamless WebRTC audio transport with JWT token authentication and bi-directional media streams.
+                  Energy & RMS Voice Activity Detection with dynamic background noise floor tracking and configurable silence thresholds.
+                </p>
+              </div>
+
+              <div className="feature-card">
+                <div className="feature-icon">🛑</div>
+                <h3 className="feature-title">Barge-in Support</h3>
+                <p className="feature-desc">
+                  Upcoming v0.5.0: Interrupter agent stops speaking immediately upon candidate barge-in, cancelling active audio tracks.
                 </p>
               </div>
             </section>

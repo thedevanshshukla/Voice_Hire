@@ -569,6 +569,62 @@ body {
   color: var(--text-secondary);
 }
 
+/* VAD State Pill */
+.vad-state-pill {
+  font-family: var(--font-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 14px;
+  border-radius: 20px;
+  border: 1px solid var(--border-color);
+  background: rgba(0, 0, 0, 0.4);
+  transition: var(--transition-smooth);
+}
+
+.vad-state-pill.speaking {
+  color: var(--accent-green);
+  border-color: var(--accent-green);
+  box-shadow: 0 0 10px rgba(34, 197, 94, 0.2);
+}
+
+.vad-state-pill.paused {
+  color: var(--accent-yellow);
+  border-color: var(--accent-yellow);
+  box-shadow: 0 0 10px rgba(234, 179, 8, 0.2);
+}
+
+.vad-state-pill.endpoint {
+  color: var(--accent-purple);
+  border-color: var(--accent-purple);
+}
+
+.vad-state-pill.idle {
+  color: var(--text-muted);
+}
+
+.vad-settings-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 4px 12px;
+  border-radius: 8px;
+}
+
+.vad-slider-label {
+  font-family: var(--font-secondary);
+  font-size: 11px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vad-slider {
+  cursor: pointer;
+  accent-color: var(--accent-purple);
+}
+
 /* Latency HUD */
 .live-latency-hud {
   display: flex;

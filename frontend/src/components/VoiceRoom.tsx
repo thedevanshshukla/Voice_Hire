@@ -6,6 +6,9 @@ interface VoiceMetrics {
   llm_total_ms?: number;
   tts_ttfa_ms?: number;
   tts_total_ms?: number;
+  speech_duration_ms?: number;
+  pause_count?: number;
+  endpointing_delay_ms?: number;
   total_perceived_ms?: number;
   total_turn_ms?: number;
   total_latency_ms?: number;
@@ -33,6 +36,8 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
   const [isMuted, setIsMuted] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [useStreamingMode, setUseStreamingMode] = useState(true);
+  const [silenceThresholdMs, setSilenceThresholdMs] = useState(800);
+  const [vadState, setVadState] = useState<'idle' | 'speaking' | 'paused' | 'endpoint'>('idle');
   const [inputText, setInputText] = useState('');
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [livekitUrl, setLivekitUrl] = useState<string>('');
@@ -71,6 +76,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
       setLivekitUrl(data.url);
       setIsConnected(true);
       setAgentStatus('listening');
+      setVadState('idle');
 
       // Initial greeting message
       const initialGreeting: TranscriptMessage = {
@@ -94,6 +100,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
     setIsConnected(false);
     setSessionToken(null);
     setAgentStatus('idle');
+    setVadState('idle');
     setActiveMetrics(null);
   };
 
@@ -118,6 +125,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
 
     ws.onopen = () => {
       setAgentStatus('thinking');
+      setVadState('endpoint');
       const historyPayload = messages.map((m) => ({
         role: m.role === 'candidate' ? 'user' : 'assistant',
         content: m.text
@@ -146,7 +154,11 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
       try {
         const payload = JSON.parse(event.data);
         
-        if (payload.event_type === 'token') {
+        if (payload.event_type === 'vad_event') {
+          if (payload.vad_status === 'candidate_speaking') setVadState('speaking');
+          else if (payload.vad_status === 'candidate_paused') setVadState('paused');
+          else if (payload.vad_status === 'turn_endpoint') setVadState('endpoint');
+        } else if (payload.event_type === 'token') {
           fullAgentText += payload.text;
           setAgentStatus('speaking');
           setMessages((prev) =>
@@ -168,6 +180,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
         } else if (payload.event_type === 'done') {
           ws.close();
           setIsProcessing(false);
+          setVadState('idle');
           setTimeout(() => setAgentStatus('listening'), 1500);
         }
       } catch (err) {
@@ -180,6 +193,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
       setErrorMsg('Streaming connection error');
       setIsProcessing(false);
       setAgentStatus('listening');
+      setVadState('idle');
     };
   };
 
@@ -190,6 +204,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
 
     setErrorMsg(null);
     setIsProcessing(true);
+    setVadState('speaking');
 
     const userMsgId = `user-${Date.now()}`;
     const userMsg: TranscriptMessage = {
@@ -250,11 +265,13 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
 
       setTimeout(() => {
         setAgentStatus('listening');
+        setVadState('idle');
       }, 2000);
     } catch (err: any) {
       console.error('Turn error:', err);
       setErrorMsg(err.message || 'Error processing speech turn');
       setAgentStatus('listening');
+      setVadState('idle');
     } finally {
       setIsProcessing(false);
     }
@@ -271,7 +288,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
               {isConnected ? `Room: ${roomName}` : 'Technical Interview Session'}
             </h3>
             <span className="room-subtitle">
-              {isConnected ? `Connected as ${candidateName} • ${agentStatus.toUpperCase()}` : 'LiveKit WebRTC Streaming Voice Pipeline v0.3.0'}
+              {isConnected ? `Connected as ${candidateName} • ${agentStatus.toUpperCase()}` : 'LiveKit WebRTC Natural Turn Taking v0.4.0'}
             </span>
           </div>
         </div>
@@ -285,7 +302,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
                   checked={useStreamingMode}
                   onChange={(e) => setUseStreamingMode(e.target.checked)}
                 />
-                <span>⚡ Realtime Stream</span>
+                <span>⚡ Stream</span>
               </label>
             </div>
           )}
@@ -314,7 +331,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
           <div className="setup-icon">🎙️</div>
           <h2>Join Voice Interview Session</h2>
           <p className="setup-description">
-            Experience ultra low-latency streaming Voice AI with LiveKit token authentication, TTFT/TTFA telemetry, and natural conversational flow.
+            Experience natural turn taking with VAD endpointing, distinguishing brief candidate thinking pauses from completed answers.
           </p>
 
           <div className="form-group">
@@ -348,6 +365,14 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
         <div className="active-room-layout">
           {/* Visualizer & Latency Telemetry HUD */}
           <div className="agent-visualizer-card">
+            {/* VAD State Pill */}
+            <div className={`vad-state-pill ${vadState}`}>
+              {vadState === 'speaking' && '🟢 Candidate Speaking (VAD Active)'}
+              {vadState === 'paused' && '🟡 Thinking Pause (Agent Waiting)'}
+              {vadState === 'endpoint' && '🟣 Turn Endpoint Reached'}
+              {vadState === 'idle' && '⚪ Ready / Listening'}
+            </div>
+
             <div className={`waveform-visualizer ${agentStatus}`}>
               <div className="bar bar-1"></div>
               <div className="bar bar-2"></div>
@@ -364,7 +389,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
               {agentStatus === 'idle' && 'Ready'}
             </div>
 
-            {/* Live Streaming Latency HUD */}
+            {/* Live Streaming & VAD Latency HUD */}
             {activeMetrics && (
               <div className="live-latency-hud">
                 <div className="hud-metric">
@@ -375,12 +400,34 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
                   <span className="hud-label">TTS TTFA</span>
                   <span className="hud-val ttfa">{activeMetrics.tts_ttfa_ms ?? 0}ms</span>
                 </div>
+                {activeMetrics.pause_count !== undefined && (
+                  <div className="hud-metric">
+                    <span className="hud-label">Pauses</span>
+                    <span className="hud-val" style={{ color: 'var(--accent-yellow)' }}>{activeMetrics.pause_count}</span>
+                  </div>
+                )}
                 <div className="hud-metric">
                   <span className="hud-label">Perceived Turnaround</span>
                   <span className="hud-val perceived">{activeMetrics.total_perceived_ms ?? activeMetrics.total_latency_ms ?? 0}ms</span>
                 </div>
               </div>
             )}
+
+            {/* VAD Sensitivity Control Slider */}
+            <div className="vad-settings-bar">
+              <label className="vad-slider-label">
+                <span>VAD Silence Threshold: <strong>{silenceThresholdMs}ms</strong></span>
+                <input
+                  type="range"
+                  min="400"
+                  max="1600"
+                  step="100"
+                  value={silenceThresholdMs}
+                  onChange={(e) => setSilenceThresholdMs(Number(e.target.value))}
+                  className="vad-slider"
+                />
+              </label>
+            </div>
 
             {sessionToken && (
               <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
@@ -411,6 +458,9 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
                     {msg.metrics.tts_ttfa_ms !== undefined && (
                       <span className="latency-badge">TTFA: {msg.metrics.tts_ttfa_ms}ms</span>
                     )}
+                    {msg.metrics.pause_count !== undefined && (
+                      <span className="latency-badge">Pauses: {msg.metrics.pause_count}</span>
+                    )}
                     <span className="latency-badge total">
                       Total: {msg.metrics.total_perceived_ms ?? msg.metrics.total_turn_ms ?? msg.metrics.total_latency_ms}ms
                     </span>
@@ -434,17 +484,17 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, onClose }) => {
             <div className="quick-replies">
               <button
                 className="chip-btn"
-                onClick={() => handleSendTurn('I specialize in distributed backend microservices using Python and Redis.')}
+                onClick={() => handleSendTurn('Let me think... [pause] In Python, the Global Interpreter Lock prevents concurrent bytecode execution.')}
                 disabled={isProcessing}
               >
-                "Distributed Python & Redis experience"
+                "Python GIL with pause"
               </button>
               <button
                 className="chip-btn"
-                onClick={() => handleSendTurn('How does LiveKit WebRTC handle packet loss and jitter buffer during audio streaming?')}
+                onClick={() => handleSendTurn('To handle database write scalability, we can use horizontal sharding with consistent hashing.')}
                 disabled={isProcessing}
               >
-                "LiveKit WebRTC packet loss question"
+                "Database sharding answer"
               </button>
             </div>
 

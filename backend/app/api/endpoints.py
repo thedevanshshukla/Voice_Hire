@@ -10,6 +10,8 @@ from app.agent.worker import generate_livekit_token
 from app.voice.factory import VoiceProviderFactory
 from app.voice.pipeline import BasicVoicePipeline, PipelineTurnResult
 from app.voice.streaming_pipeline import StreamingVoicePipeline, StreamAudioEvent
+from app.voice.vad.turn_detector import TurnDetector, TurnDetectionResult
+from app.voice.vad.providers.energy import EnergyVADProvider
 from app.voice.llm.base import LLMMessage
 
 logger = get_logger("api.endpoints")
@@ -18,6 +20,7 @@ router = APIRouter()
 # Global pipeline instances
 voice_pipeline = BasicVoicePipeline()
 streaming_pipeline = StreamingVoicePipeline()
+turn_detector = TurnDetector()
 
 class TokenRequest(BaseModel):
     room_name: str = Field(..., description="Unique LiveKit room name")
@@ -41,7 +44,18 @@ class VoiceTurnResponse(BaseModel):
     response_text: str
     audio_base64: str
     audio_format: str
-    metrics: Dict[str, float]
+    metrics: Dict[str, Any]
+
+class VADFrameRequest(BaseModel):
+    audio_frame_b64: str
+    sample_rate: int = 16000
+
+class VADFrameResponse(BaseModel):
+    status: str
+    is_turn_complete: bool
+    speech_duration_ms: float
+    pause_duration_ms: float
+    pause_count: int
 
 @router.get("/health")
 async def health_check() -> Dict[str, Any]:
@@ -56,21 +70,28 @@ async def health_check() -> Dict[str, Any]:
         "providers": {
             "stt": settings.STT_PROVIDER,
             "llm": settings.LLM_PROVIDER,
-            "tts": settings.TTS_PROVIDER
+            "tts": settings.TTS_PROVIDER,
+            "vad": settings.VAD_PROVIDER
         }
     }
 
 @router.get("/api/voice/status")
 async def voice_status() -> Dict[str, Any]:
     """
-    Returns the configured voice providers, LiveKit status, and streaming capabilities.
+    Returns the configured voice providers, LiveKit status, streaming, and VAD settings.
     """
     return {
         "livekit_url": settings.LIVEKIT_URL,
         "providers": {
             "stt": settings.STT_PROVIDER,
             "llm": settings.LLM_PROVIDER,
-            "tts": settings.TTS_PROVIDER
+            "tts": settings.TTS_PROVIDER,
+            "vad": settings.VAD_PROVIDER
+        },
+        "vad_settings": {
+            "silence_threshold_ms": settings.VAD_SILENCE_THRESHOLD_MS,
+            "min_speech_ms": settings.VAD_MIN_SPEECH_DURATION_MS,
+            "pause_tolerance_ms": settings.VAD_MAX_PAUSE_TOLERANCE_MS
         },
         "streaming_supported": True,
         "version": settings.VERSION
@@ -99,6 +120,24 @@ async def get_voice_token(req: TokenRequest) -> TokenResponse:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Token generation failed: {str(e)}"
         )
+
+@router.post("/api/voice/vad/process", response_model=VADFrameResponse)
+async def process_vad_frame(req: VADFrameRequest) -> VADFrameResponse:
+    """
+    Process incoming audio frame through TurnDetector and return activity state.
+    """
+    try:
+        frame_bytes = base64.b64decode(req.audio_frame_b64)
+        res: TurnDetectionResult = turn_detector.process_frame(frame_bytes, sample_rate=req.sample_rate)
+        return VADFrameResponse(
+            status=res.status.value,
+            is_turn_complete=res.is_turn_complete,
+            speech_duration_ms=res.speech_duration_ms,
+            pause_duration_ms=res.pause_duration_ms,
+            pause_count=res.pause_count
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"VAD frame processing failed: {str(e)}")
 
 @router.post("/api/voice/turn", response_model=VoiceTurnResponse)
 async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
@@ -142,8 +181,7 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
 @router.websocket("/api/voice/stream/ws")
 async def voice_streaming_websocket(websocket: WebSocket):
     """
-    Full-duplex WebSocket endpoint for real-time streaming voice sessions.
-    Clients send text or audio events; server streams tokens, audio chunks, and latency metrics.
+    Full-duplex WebSocket endpoint for real-time streaming voice sessions with VAD events.
     """
     await websocket.accept()
     logger.info("WebSocket voice stream client connected")
@@ -173,6 +211,7 @@ async def voice_streaming_websocket(websocket: WebSocket):
             ):
                 payload = {
                     "event_type": event.event_type,
+                    "vad_status": event.vad_status,
                     "text": event.text,
                     "audio_format": event.audio_format
                 }
