@@ -31,6 +31,14 @@ class InterviewTopic(str, Enum):
     APIS = "REST & GraphQL API Design"
     KAFKA_QUEUES = "Message Queues & Event Streaming"
 
+class InterviewStage(str, Enum):
+    GREETING = "greeting"
+    RESUME_DEEP_DIVE = "resume_deep_dive"
+    CORE_CONCEPTS = "core_concepts"
+    SYSTEM_DESIGN = "system_design"
+    CANDIDATE_QUESTIONS = "candidate_questions"
+    WRAP_UP = "wrap_up"
+
 class InterviewConfig(BaseModel):
     role: InterviewRole = InterviewRole.BACKEND
     experience_level: ExperienceLevel = ExperienceLevel.MID
@@ -44,6 +52,7 @@ class InterviewConfig(BaseModel):
 
 class TranscriptEntry(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    stage: InterviewStage = InterviewStage.GREETING
     role: str # "candidate" or "interviewer"
     text: str
     timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -62,6 +71,15 @@ class InterviewSession(BaseModel):
     candidate_name: str = "Candidate"
     config: InterviewConfig = Field(default_factory=InterviewConfig)
     status: SessionStatus = SessionStatus.CONFIGURED
+    current_stage: InterviewStage = InterviewStage.GREETING
+    stage_turn_counts: Dict[str, int] = Field(default_factory=lambda: {
+        "greeting": 0,
+        "resume_deep_dive": 0,
+        "core_concepts": 0,
+        "system_design": 0,
+        "candidate_questions": 0,
+        "wrap_up": 0
+    })
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     started_at: Optional[str] = None
     completed_at: Optional[str] = None

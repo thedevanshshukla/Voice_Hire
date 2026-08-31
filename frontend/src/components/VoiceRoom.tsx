@@ -24,6 +24,7 @@ interface TranscriptMessage {
   id: string;
   role: 'candidate' | 'interviewer';
   text: string;
+  stage?: string;
   audioBase64?: string;
   metrics?: VoiceMetrics;
   isStreaming?: boolean;
@@ -37,6 +38,15 @@ interface VoiceRoomProps {
   onClose?: () => void;
 }
 
+const STAGES = [
+  { id: 'greeting', label: '1. Intro', icon: '👋' },
+  { id: 'resume_deep_dive', label: '2. Past Projects', icon: '📂' },
+  { id: 'core_concepts', label: '3. Core Concepts', icon: '🧠' },
+  { id: 'system_design', label: '4. System Design', icon: '🏛️' },
+  { id: 'candidate_questions', label: '5. Q&A', icon: '❓' },
+  { id: 'wrap_up', label: '6. Wrap-Up', icon: '🏁' }
+];
+
 export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onClose }) => {
   const [roomName, setRoomName] = useState(activeSession ? activeSession.session_id : 'interview-session-01');
   const [candidateName, setCandidateName] = useState(activeSession ? activeSession.candidate_name : 'Candidate');
@@ -46,6 +56,10 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
   const [useStreamingMode, setUseStreamingMode] = useState(true);
   const [silenceThresholdMs, setSilenceThresholdMs] = useState(800);
   const [vadState, setVadState] = useState<'idle' | 'speaking' | 'paused' | 'endpoint'>('idle');
+  const [currentStage, setCurrentStage] = useState<string>('greeting');
+  const [stageProgressPct, setStageProgressPct] = useState<number>(16.6);
+  const [stageNotification, setStageNotification] = useState<string | null>(null);
+  
   const [inputText, setInputText] = useState('');
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [livekitUrl, setLivekitUrl] = useState<string>('');
@@ -121,6 +135,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
       const initialGreeting: TranscriptMessage = {
         id: 'msg-0',
         role: 'interviewer',
+        stage: 'greeting',
         text: `Hello ${candidateName}! Welcome to your technical interview for the ${roleName} position. Could you introduce yourself and tell me about a complex project you recently architected?`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
       };
@@ -157,7 +172,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
     }
   };
 
-  // Process streaming turn over WebSocket with Interview Session Context
+  // Process streaming turn over WebSocket with State Machine progression
   const handleSendStreamingTurn = async (textToSend: string) => {
     cancelActiveAudio();
     const wsUrl = apiUrl.replace(/^http/, 'ws') + '/api/voice/stream/ws';
@@ -180,6 +195,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
         {
           id: agentMsgId,
           role: 'interviewer',
+          stage: currentStage,
           text: '...',
           isStreaming: true,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -198,7 +214,12 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
       try {
         const payload = JSON.parse(event.data);
         
-        if (payload.event_type === 'vad_event') {
+        if (payload.event_type === 'stage_transition') {
+          setCurrentStage(payload.stage);
+          setStageProgressPct(payload.progress_pct);
+          setStageNotification(`🎯 Stage Advanced: ${payload.stage_display_name}`);
+          setTimeout(() => setStageNotification(null), 4000);
+        } else if (payload.event_type === 'vad_event') {
           if (payload.vad_status === 'candidate_speaking') setVadState('speaking');
           else if (payload.vad_status === 'candidate_paused') setVadState('paused');
           else if (payload.vad_status === 'turn_endpoint') setVadState('endpoint');
@@ -267,6 +288,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
     const userMsg: TranscriptMessage = {
       id: userMsgId,
       role: 'candidate',
+      stage: currentStage,
       text: textToSend,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
     };
@@ -305,10 +327,15 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
       const data = await res.json();
       setAgentStatus('speaking');
       setActiveMetrics(data.metrics);
+      if (data.current_stage) {
+        setCurrentStage(data.current_stage);
+        setStageProgressPct(data.progress_pct);
+      }
 
       const agentMsg: TranscriptMessage = {
         id: `agent-${Date.now()}`,
         role: 'interviewer',
+        stage: data.current_stage || currentStage,
         text: data.response_text,
         audioBase64: data.audio_base64,
         metrics: data.metrics,
@@ -335,6 +362,8 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
     }
   };
 
+  const getStageIndex = (stageId: string) => STAGES.findIndex((s) => s.id === stageId);
+
   return (
     <div className="voice-room-container">
       {/* Header bar */}
@@ -351,7 +380,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
               )}
             </div>
             <span className="room-subtitle">
-              {isConnected ? `Candidate: ${candidateName} • ${agentStatus.toUpperCase()}` : 'LiveKit WebRTC Interview v0.6.0'}
+              {isConnected ? `Candidate: ${candidateName} • ${agentStatus.toUpperCase()}` : 'LiveKit WebRTC Interview State Machine v0.7.0'}
             </span>
           </div>
         </div>
@@ -391,9 +420,48 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
         </div>
       </div>
 
+      {/* 6-Stage Progression Timeline */}
+      {isConnected && (
+        <div className="stage-timeline-container">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', maxWidth: '900px', margin: '0 auto 8px auto' }}>
+            <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-muted)' }}>
+              Interview Progression
+            </span>
+            <span style={{ fontSize: '11px', fontFamily: 'monospace', fontWeight: 700, color: 'var(--accent-purple)' }}>
+              {stageProgressPct}% Complete
+            </span>
+          </div>
+          <div className="stage-timeline">
+            {STAGES.map((s, idx) => {
+              const currentIndex = getStageIndex(currentStage);
+              const isPast = idx < currentIndex;
+              const isCurrent = idx === currentIndex;
+              return (
+                <div 
+                  key={s.id} 
+                  className={`timeline-step ${isPast ? 'completed' : ''} ${isCurrent ? 'active' : ''}`}
+                >
+                  <div className="step-bullet">
+                    {isPast ? '✓' : s.icon}
+                  </div>
+                  <span className="step-label">{s.label}</span>
+                  {idx < STAGES.length - 1 && <div className="step-connector"></div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {errorMsg && (
         <div className="error-banner">
           ⚠️ {errorMsg}
+        </div>
+      )}
+
+      {stageNotification && (
+        <div className="stage-notification-banner">
+          {stageNotification}
         </div>
       )}
 
@@ -409,7 +477,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
           <div className="setup-icon">🎙️</div>
           <h2>Launch Interview Session</h2>
           <p className="setup-description">
-            Connecting to LiveKit WebRTC channel with MongoDB session persistence and dynamic system prompt injection.
+            Connecting to LiveKit WebRTC channel with MongoDB session persistence and 6-stage interview progression.
           </p>
 
           <div className="form-group">
@@ -524,7 +592,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
 
             {sessionToken && (
               <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
-                LiveKit Host: {livekitUrl} • Session ID: {activeSession?.session_id || roomName} • MongoDB Synced
+                LiveKit Host: {livekitUrl} • Session ID: {activeSession?.session_id || roomName} • Stage: {currentStage.toUpperCase()}
               </div>
             )}
           </div>
@@ -537,7 +605,10 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                   <span className="bubble-author">
                     {msg.role === 'candidate' ? `🧑 ${candidateName}` : '🤖 AI Interviewer'}
                   </span>
-                  <span className="bubble-time">{msg.timestamp}</span>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    {msg.stage && <span className="bubble-stage-tag">{msg.stage}</span>}
+                    <span className="bubble-time">{msg.timestamp}</span>
+                  </div>
                 </div>
                 <div className="bubble-content">
                   {msg.text}

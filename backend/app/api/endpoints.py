@@ -16,10 +16,11 @@ from app.voice.interruption.barge_in import BargeInDetector
 from app.voice.llm.base import LLMMessage
 from app.models.interview import (
     InterviewSession, InterviewConfig, InterviewRole, ExperienceLevel,
-    InterviewLanguage, InterviewTopic, TranscriptEntry, SessionStatus
+    InterviewLanguage, InterviewTopic, InterviewStage, TranscriptEntry, SessionStatus
 )
 from app.db.mongo import InterviewSessionRepository
 from app.interview.prompt_builder import InterviewPromptBuilder
+from app.interview.state_machine import InterviewStateMachine, STAGE_SEQUENCE, STAGE_DISPLAY_NAMES, StageBudget
 
 logger = get_logger("api.endpoints")
 router = APIRouter()
@@ -29,6 +30,9 @@ voice_pipeline = BasicVoicePipeline()
 streaming_pipeline = StreamingVoicePipeline()
 turn_detector = TurnDetector()
 barge_in_detector = BargeInDetector()
+
+# In-memory active session state machines
+active_state_machines: Dict[str, InterviewStateMachine] = {}
 
 class TokenRequest(BaseModel):
     room_name: str = Field(..., description="Unique LiveKit room name")
@@ -55,6 +59,9 @@ class VoiceTurnResponse(BaseModel):
     response_text: str
     audio_base64: str
     audio_format: str
+    current_stage: str
+    stage_display_name: str
+    progress_pct: float
     metrics: Dict[str, Any]
 
 class VADFrameRequest(BaseModel):
@@ -82,20 +89,37 @@ async def get_interview_templates() -> Dict[str, Any]:
         "experience_levels": [e.value for e in ExperienceLevel],
         "topics": [t.value for t in InterviewTopic],
         "languages": [l.value for l in InterviewLanguage],
+        "stages": [
+            {"id": s.value, "display_name": STAGE_DISPLAY_NAMES[s]}
+            for s in STAGE_SEQUENCE
+        ],
         "default_duration_minutes": 30
     }
+
+@router.get("/api/interview/stages")
+async def get_interview_stages(duration_minutes: int = 30) -> List[Dict[str, Any]]:
+    """
+    Returns the 6 interview stages with time budgets for the given duration.
+    """
+    dummy_config = InterviewConfig(duration_minutes=duration_minutes)
+    sm = InterviewStateMachine(config=dummy_config)
+    budgets = sm.get_budgets()
+    return [b.model_dump() for b in budgets]
 
 @router.post("/api/interview/session", response_model=InterviewSession)
 async def create_interview_session(config: InterviewConfig, candidate_name: str = "Candidate") -> InterviewSession:
     """
-    Create and persist a new technical interview session with role, level, topics, and JD in MongoDB.
+    Create and persist a new technical interview session in MongoDB with initial GREETING stage.
     """
     session = InterviewSession(
         candidate_name=candidate_name,
         config=config,
-        status=SessionStatus.CONFIGURED
+        status=SessionStatus.CONFIGURED,
+        current_stage=InterviewStage.GREETING
     )
-    return await InterviewSessionRepository.create_session(session)
+    saved = await InterviewSessionRepository.create_session(session)
+    active_state_machines[session.session_id] = InterviewStateMachine(config=config, initial_stage=InterviewStage.GREETING)
+    return saved
 
 @router.get("/api/interview/session/{session_id}", response_model=InterviewSession)
 async def get_interview_session(session_id: str) -> InterviewSession:
@@ -120,9 +144,6 @@ async def list_interview_sessions(candidate_id: Optional[str] = None, limit: int
 
 @router.get("/health")
 async def health_check() -> Dict[str, Any]:
-    """
-    Health check endpoint to verify backend status, version, and provider configuration.
-    """
     return {
         "status": "healthy",
         "project": settings.PROJECT_NAME,
@@ -137,15 +158,13 @@ async def health_check() -> Dict[str, Any]:
         "features": {
             "streaming": True,
             "barge_in": settings.BARGE_IN_ENABLED,
-            "interview_foundation": True
+            "interview_foundation": True,
+            "interview_state_machine": True
         }
     }
 
 @router.get("/api/voice/status")
 async def voice_status() -> Dict[str, Any]:
-    """
-    Returns configured voice providers, LiveKit status, streaming, VAD, and interview configurations.
-    """
     return {
         "livekit_url": settings.LIVEKIT_URL,
         "providers": {
@@ -174,9 +193,6 @@ async def voice_status() -> Dict[str, Any]:
 
 @router.post("/api/voice/token", response_model=TokenResponse)
 async def get_voice_token(req: TokenRequest) -> TokenResponse:
-    """
-    Generate a signed LiveKit WebRTC participant token for joining an interview voice session.
-    """
     try:
         token = generate_livekit_token(
             room_name=req.room_name,
@@ -199,9 +215,6 @@ async def get_voice_token(req: TokenRequest) -> TokenResponse:
 
 @router.post("/api/voice/vad/process", response_model=VADFrameResponse)
 async def process_vad_frame(req: VADFrameRequest) -> VADFrameResponse:
-    """
-    Process incoming audio frame through TurnDetector and return activity state.
-    """
     try:
         frame_bytes = base64.b64decode(req.audio_frame_b64)
         res: TurnDetectionResult = turn_detector.process_frame(frame_bytes, sample_rate=req.sample_rate)
@@ -217,9 +230,6 @@ async def process_vad_frame(req: VADFrameRequest) -> VADFrameResponse:
 
 @router.post("/api/voice/turn", response_model=VoiceTurnResponse)
 async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
-    """
-    Process a single voice turn with contextual system prompt generation and transcript persistence.
-    """
     try:
         if req.audio_base64:
             audio_bytes = base64.b64decode(req.audio_base64)
@@ -231,13 +241,32 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
             for item in req.history:
                 history_msgs.append(LLMMessage(role=item.get("role", "user"), content=item.get("content", "")))
 
-        # Retrieve session context if session_id provided
+        # Retrieve session context and state machine
         system_prompt = None
         session = None
+        current_stage = InterviewStage.GREETING
+        progress_pct = 16.6
+        
         if req.session_id:
             session = await InterviewSessionRepository.get_session(req.session_id)
             if session:
-                system_prompt = InterviewPromptBuilder.build_system_prompt(session.config, session.candidate_name)
+                if req.session_id not in active_state_machines:
+                    active_state_machines[req.session_id] = InterviewStateMachine(
+                        config=session.config,
+                        initial_stage=session.current_stage
+                    )
+                sm = active_state_machines[req.session_id]
+                
+                # Advance state machine with this turn
+                trans_res = sm.step_turn(last_candidate_reply=req.text or "")
+                current_stage = trans_res.current_stage
+                progress_pct = trans_res.progress_pct
+                
+                system_prompt = InterviewPromptBuilder.build_system_prompt(
+                    config=session.config,
+                    candidate_name=session.candidate_name,
+                    stage=current_stage
+                )
 
         if req.text and isinstance(voice_pipeline.stt, type(VoiceProviderFactory.get_stt_provider("mock"))):
             voice_pipeline.stt.default_response = req.text
@@ -249,14 +278,26 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
             language=req.language
         )
 
-        # Persist transcripts to session if active
         if session:
-            session.transcripts.append(TranscriptEntry(role="candidate", text=turn_result.transcript))
-            session.transcripts.append(TranscriptEntry(role="interviewer", text=turn_result.response_text, metrics=turn_result.metrics.model_dump()))
+            session.transcripts.append(TranscriptEntry(
+                stage=current_stage,
+                role="candidate", 
+                text=turn_result.transcript
+            ))
+            session.transcripts.append(TranscriptEntry(
+                stage=current_stage,
+                role="interviewer", 
+                text=turn_result.response_text, 
+                metrics=turn_result.metrics.model_dump()
+            ))
             session.turn_count += 1
+            session.current_stage = current_stage
+            session.stage_turn_counts = sm.stage_turn_counts
             await InterviewSessionRepository.update_session(session.session_id, {
                 "transcripts": [t.model_dump() for t in session.transcripts],
-                "turn_count": session.turn_count
+                "turn_count": session.turn_count,
+                "current_stage": session.current_stage.value,
+                "stage_turn_counts": session.stage_turn_counts
             })
 
         return VoiceTurnResponse(
@@ -264,6 +305,9 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
             response_text=turn_result.response_text,
             audio_base64=base64.b64encode(turn_result.audio_bytes).decode("utf-8"),
             audio_format=turn_result.audio_format,
+            current_stage=current_stage.value,
+            stage_display_name=STAGE_DISPLAY_NAMES[current_stage],
+            progress_pct=progress_pct,
             metrics=turn_result.metrics.model_dump()
         )
     except Exception as e:
@@ -276,7 +320,7 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
 @router.websocket("/api/voice/stream/ws")
 async def voice_streaming_websocket(websocket: WebSocket):
     """
-    Full-duplex WebSocket endpoint for real-time streaming voice sessions with Interview Context and Barge-In.
+    Full-duplex WebSocket endpoint for real-time streaming voice sessions with State Machine progression.
     """
     await websocket.accept()
     logger.info("WebSocket voice stream client connected")
@@ -304,12 +348,35 @@ async def voice_streaming_websocket(websocket: WebSocket):
             session_id = data.get("session_id")
             history = data.get("history", [])
             
-            # Fetch contextual system prompt
             system_prompt = None
+            current_stage = InterviewStage.GREETING
+            
             if session_id:
                 session = await InterviewSessionRepository.get_session(session_id)
                 if session:
-                    system_prompt = InterviewPromptBuilder.build_system_prompt(session.config, session.candidate_name)
+                    if session_id not in active_state_machines:
+                        active_state_machines[session_id] = InterviewStateMachine(
+                            config=session.config,
+                            initial_stage=session.current_stage
+                        )
+                    sm = active_state_machines[session_id]
+                    trans_res = sm.step_turn(last_candidate_reply=text or "")
+                    current_stage = trans_res.current_stage
+
+                    # Emit stage transition event if advanced
+                    if trans_res.transitioned:
+                        await websocket.send_json({
+                            "event_type": "stage_transition",
+                            "stage": current_stage.value,
+                            "stage_display_name": trans_res.stage_display_name,
+                            "progress_pct": trans_res.progress_pct
+                        })
+
+                    system_prompt = InterviewPromptBuilder.build_system_prompt(
+                        config=session.config,
+                        candidate_name=session.candidate_name,
+                        stage=current_stage
+                    )
 
             history_msgs = [
                 LLMMessage(role=m.get("role", "user"), content=m.get("content", ""))
@@ -331,6 +398,7 @@ async def voice_streaming_websocket(websocket: WebSocket):
                     "event_type": event.event_type,
                     "vad_status": event.vad_status,
                     "text": event.text,
+                    "stage": current_stage.value,
                     "audio_format": event.audio_format
                 }
                 if event.audio_bytes:

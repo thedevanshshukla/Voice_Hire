@@ -1,12 +1,18 @@
-from app.models.interview import InterviewConfig, InterviewRole, ExperienceLevel, InterviewLanguage
+from typing import Optional
+from app.models.interview import InterviewConfig, InterviewRole, ExperienceLevel, InterviewLanguage, InterviewStage
+from app.interview.state_machine import InterviewStateMachine
 
 class InterviewPromptBuilder:
     """
-    Constructs dynamic, role-tailored system prompts for the technical voice AI interviewer.
+    Constructs dynamic, role-tailored and stage-conditioned system prompts for Voice AI interviews.
     """
     
     @staticmethod
-    def build_system_prompt(config: InterviewConfig, candidate_name: str = "Candidate") -> str:
+    def build_system_prompt(
+        config: InterviewConfig, 
+        candidate_name: str = "Candidate",
+        stage: Optional[InterviewStage] = None
+    ) -> str:
         topics_str = ", ".join(config.topics)
         lang_instruction = (
             "Conduct the entire interview strictly in Hindi (Devanagari script for speech synthesis)."
@@ -23,10 +29,16 @@ TARGET JOB DESCRIPTION & REQUIREMENTS:
 \"\"\"
 """
 
+        # Stage specific directive
+        sm = InterviewStateMachine(config=config, initial_stage=stage or InterviewStage.GREETING)
+        stage_directive = sm.get_stage_directive(stage=stage)
+
         prompt = f"""You are VoiceHire, a senior staff technical interviewer conducting a live voice technical interview for a {config.role.value} position at the {config.experience_level.value} level.
 Candidate Name: {candidate_name}
 Target Duration: {config.duration_minutes} minutes
 Selected Evaluation Topics: {topics_str}
+
+{stage_directive}
 
 {lang_instruction}
 
