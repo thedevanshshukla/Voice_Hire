@@ -42,7 +42,7 @@
   --bg-input: #ffffff;
 
   --text-primary: #0f172a;
-  --text-secondary: #475569;
+  --text-secondary: #334155;
   --text-muted: #64748b;
 
   --accent-purple: #7c3aed;
@@ -51,13 +51,52 @@
   --accent-red: #dc2626;
   --accent-yellow: #d97706;
 
-  --grad-primary: linear-gradient(135deg, #7c3aed 0%, #3b82f6 100%);
+  --grad-primary: linear-gradient(135deg, #6d28d9 0%, #2563eb 100%);
   --grad-glow: radial-gradient(circle, rgba(124, 58, 237, 0.08) 0%, rgba(248, 250, 252, 0) 70%);
+  --hero-title-grad: linear-gradient(135deg, #0f172a 20%, #6d28d9 65%, #2563eb 100%);
 
   --border-color: #e2e8f0;
   --border-hover: rgba(124, 58, 237, 0.5);
 
   --shadow-lg: 0 10px 30px -10px rgba(15, 23, 42, 0.1);
+}
+
+[data-theme='light'] .navbar {
+  background-color: rgba(255, 255, 255, 0.85);
+  border-bottom: 1px solid var(--border-color);
+}
+
+[data-theme='light'] .feature-card,
+[data-theme='light'] .auth-card,
+[data-theme='light'] .setup-section,
+[data-theme='light'] .report-card,
+[data-theme='light'] .benchmark-hero,
+[data-theme='light'] .benchmark-metric-card,
+[data-theme='light'] .scorecard-hero {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 4px 20px -2px rgba(15, 23, 42, 0.06);
+}
+
+[data-theme='light'] .chat-bubble-wrapper.assistant .chat-bubble {
+  background: #f1f5f9;
+  color: #0f172a;
+  border: 1px solid #e2e8f0;
+}
+
+[data-theme='light'] .chat-bubble-wrapper.user .chat-bubble {
+  background: #6d28d9;
+  color: #ffffff;
+}
+
+[data-theme='light'] .voice-room-header {
+  background: rgba(255, 255, 255, 0.95);
+  border-bottom: 1px solid #e2e8f0;
+}
+
+[data-theme='light'] .agent-visualizer-card {
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
 }
 
 .btn-theme-toggle {
@@ -242,7 +281,7 @@ body {
   line-height: 1.1;
   letter-spacing: -2px;
   margin-bottom: 20px;
-  background: linear-gradient(to right, #ffffff 30%, #a78bfa 100%);
+  background: var(--hero-title-grad, linear-gradient(135deg, #ffffff 20%, #c4b5fd 75%, #93c5fd 100%));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
