@@ -100,6 +100,9 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
   const [timerInterval, setTimerInterval] = useState<any>(null);
 
+  // 5-second silence countdown when candidate does not speak
+  const [silenceCountdown, setSilenceCountdown] = useState<number | null>(null);
+
   const [vadState, setVadState] = useState<'idle' | 'speaking' | 'paused' | 'endpoint'>('idle');
   const [currentStage, setCurrentStage] = useState<string>('greeting');
   const [stageProgressPct, setStageProgressPct] = useState<number>(16.6);
@@ -121,11 +124,46 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
   const recognitionRef = useRef<any>(null);
   const spokenBufferRef = useRef<string>('');
   const agentStatusRef = useRef<'idle' | 'listening' | 'thinking' | 'speaking'>('idle');
+  const silenceTimerRef = useRef<any>(null);
 
   // Keep agentStatusRef in sync with agentStatus state
   useEffect(() => {
     agentStatusRef.current = agentStatus;
   }, [agentStatus]);
+
+  // Handle 5-second silence countdown ticking
+  useEffect(() => {
+    if (silenceCountdown === null) {
+      if (silenceTimerRef.current) clearInterval(silenceTimerRef.current);
+      return;
+    }
+
+    if (silenceCountdown > 0) {
+      silenceTimerRef.current = setTimeout(() => {
+        setSilenceCountdown((prev) => (prev !== null && prev > 0 ? prev - 1 : null));
+      }, 1000);
+    } else if (silenceCountdown === 0) {
+      // Auto-skip turn when candidate remains silent
+      setSilenceCountdown(null);
+      if (agentStatusRef.current === 'listening') {
+        submitSpokenTurn("[Candidate remained silent / No response provided]");
+      }
+    }
+
+    return () => {
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    };
+  }, [silenceCountdown]);
+
+  // Pre-load speech synthesis voices
+  useEffect(() => {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.getVoices();
+      window.speechSynthesis.onvoiceschanged = () => {
+        window.speechSynthesis.getVoices();
+      };
+    }
+  }, []);
 
   // Fetch session details if routed directly via URL
   useEffect(() => {
@@ -171,6 +209,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
     return () => {
       stopMicrophoneStream();
       cancelActiveAudio();
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
       if (recognitionRef.current) {
         try { recognitionRef.current.stop(); } catch (_) {}
       }
@@ -189,6 +228,9 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
       activeAudioRef.current.currentTime = 0;
       activeAudioRef.current = null;
     }
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
   };
 
   const stopMicrophoneStream = () => {
@@ -206,7 +248,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
   const startSpeechRecognition = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      console.warn('Web Speech API not supported in this browser; fallback to energy VAD & emergency text.');
+      console.warn('Web Speech API not supported in this browser; using energy VAD.');
       return;
     }
 
@@ -239,6 +281,8 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
         setLiveCandidateSpokenText(fullSpoken);
         if (fullSpoken.length > 0) {
           setVadState('speaking');
+          // Cancel silence countdown when candidate starts speaking
+          setSilenceCountdown(null);
         }
       };
 
@@ -305,6 +349,9 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
         const SPEECH_THRESHOLD = 15;
         if (normalized > SPEECH_THRESHOLD && !isMuted) {
           lastSpeechTime = Date.now();
+          // Clear silence countdown immediately when sound is detected
+          setSilenceCountdown(null);
+
           if (!isCandidateSpeaking) {
             isCandidateSpeaking = true;
             setVadState('speaking');
@@ -322,7 +369,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
             // Auto-complete turn when candidate stops speaking for >3.5 seconds
             if (agentStatusRef.current === 'listening') {
               const textToSubmit = spokenBufferRef.current.trim() || liveCandidateSpokenText.trim();
-              if (textToSubmit.length > 3) {
+              if (textToSubmit.length > 2) {
                 spokenBufferRef.current = '';
                 setLiveCandidateSpokenText('');
                 submitSpokenTurn(textToSubmit);
@@ -346,36 +393,83 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
     }
   };
 
-  const playAudio = (audioBase64: string) => {
-    try {
-      cancelActiveAudio();
-      setAgentStatus('speaking');
-      const audio = new Audio(`data:audio/mp3;base64,${audioBase64}`);
-      activeAudioRef.current = audio;
-      
-      audio.onended = () => {
-        setAgentStatus('listening');
-        setVadState('idle');
-        spokenBufferRef.current = '';
-        setLiveCandidateSpokenText('');
-      };
-      
-      audio.play().catch((e) => {
-        console.warn('Audio autoplay blocked or failed:', e);
-        // Fallback to listening even if audio play failed
-        setAgentStatus('listening');
-        setVadState('idle');
-      });
-    } catch (e) {
-      console.error('Audio play error:', e);
+  // Speak AI interviewer question aloud with robust fallback to SpeechSynthesis
+  const speakQuestionAloud = (text: string, audioBase64?: string) => {
+    cancelActiveAudio();
+    setAgentStatus('speaking');
+    setVadState('idle');
+    setSilenceCountdown(null);
+
+    const onSpeechFinished = () => {
       setAgentStatus('listening');
       setVadState('idle');
+      spokenBufferRef.current = '';
+      setLiveCandidateSpokenText('');
+      // Start 5-second silence countdown for candidate to answer
+      setSilenceCountdown(5);
+    };
+
+    // If audioBase64 audio bytes are valid
+    if (audioBase64 && audioBase64.length > 400) {
+      try {
+        const audio = new Audio(`data:audio/mp3;base64,${audioBase64}`);
+        activeAudioRef.current = audio;
+        audio.onended = () => {
+          onSpeechFinished();
+        };
+        audio.onerror = () => {
+          fallbackSpeechSynthesis(text, onSpeechFinished);
+        };
+        audio.play().catch(() => {
+          fallbackSpeechSynthesis(text, onSpeechFinished);
+        });
+        return;
+      } catch (_) {
+        fallbackSpeechSynthesis(text, onSpeechFinished);
+        return;
+      }
     }
+
+    fallbackSpeechSynthesis(text, onSpeechFinished);
+  };
+
+  const fallbackSpeechSynthesis = (text: string, onDone: () => void) => {
+    if (!('speechSynthesis' in window)) {
+      onDone();
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const cleanText = text.replace(/[*_#`]/g, '').trim();
+    if (!cleanText) {
+      onDone();
+      return;
+    }
+
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+
+    const voices = window.speechSynthesis.getVoices();
+    const highQualityVoice = voices.find(
+      (v) => v.lang.startsWith('en') && (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Samantha') || v.name.includes('Jenny') || v.name.includes('Zira'))
+    ) || voices.find((v) => v.lang.startsWith('en'));
+
+    if (highQualityVoice) utterance.voice = highQualityVoice;
+
+    utterance.onend = () => {
+      onDone();
+    };
+    utterance.onerror = () => {
+      onDone();
+    };
+
+    window.speechSynthesis.speak(utterance);
   };
 
   const handleInterrupt = () => {
     cancelActiveAudio();
     setAgentStatus('listening');
+    setSilenceCountdown(null);
   };
 
   const refreshScorecardAndEvidence = async () => {
@@ -405,12 +499,15 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
     setIsProcessing(true);
     setAgentStatus('thinking');
     setVadState('endpoint');
+    setSilenceCountdown(null);
+
+    const isSilentTurn = spokenText.includes('[Candidate remained silent');
 
     const userMsg: TranscriptMessage = {
       id: `user-${Date.now()}`,
       role: 'candidate',
       stage: currentStage,
-      text: spokenText,
+      text: isSilentTurn ? '(No response / Candidate remained silent)' : spokenText,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
     };
 
@@ -450,18 +547,13 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
       };
 
       setMessages((prev) => [...prev, agentMsg]);
-
-      if (data.audio_base64) {
-        playAudio(data.audio_base64);
-      } else {
-        setAgentStatus('listening');
-        setVadState('idle');
-      }
+      speakQuestionAloud(data.response_text, data.audio_base64);
     } catch (err: any) {
       console.error('Turn error:', err);
       setErrorMsg(err.message || 'Error processing speech turn');
       setAgentStatus('listening');
       setVadState('idle');
+      setSilenceCountdown(5);
     } finally {
       setIsProcessing(false);
     }
@@ -506,30 +598,27 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
 
       if (turnResp.ok) {
         const turnData = await turnResp.json();
+        const initialGreetingText = turnData.response_text || `Hello ${candidateName}, welcome to your technical interview. I will be conducting your assessment today. To get started, please tell me about yourself and your recent engineering projects.`;
         const initialGreeting: TranscriptMessage = {
           id: `agent-${Date.now()}`,
           role: 'interviewer',
           stage: turnData.current_stage || 'greeting',
-          text: turnData.response_text || `Hello ${candidateName}, welcome to your technical interview. I will be conducting your assessment today. To get started, please tell me about yourself and your recent engineering projects.`,
+          text: initialGreetingText,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
         };
         setMessages([initialGreeting]);
-
-        if (turnData.audio_base64) {
-          playAudio(turnData.audio_base64);
-        } else {
-          setAgentStatus('listening');
-        }
+        speakQuestionAloud(initialGreetingText, turnData.audio_base64);
       } else {
+        const fallbackText = `Hello ${candidateName}, welcome to your technical assessment. I will be your interviewer today. To begin, please introduce yourself and tell me about a recent engineering project you worked on.`;
         const fallbackGreeting: TranscriptMessage = {
           id: `agent-${Date.now()}`,
           role: 'interviewer',
           stage: 'greeting',
-          text: `Hello ${candidateName}, welcome to your technical assessment. I will be your interviewer today. To begin, please introduce yourself and tell me about a recent complex system or project you worked on.`,
+          text: fallbackText,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
         };
         setMessages([fallbackGreeting]);
-        setAgentStatus('listening');
+        speakQuestionAloud(fallbackText);
       }
 
       startSpeechRecognition();
@@ -544,6 +633,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
   const handleDisconnect = () => {
     cancelActiveAudio();
     stopMicrophoneStream();
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch (_) {}
     }
@@ -760,6 +850,13 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
                 {agentStatus === 'idle' && 'Connected'}
               </div>
 
+              {/* Silence / No-Response Countdown Warning Pill */}
+              {agentStatus === 'listening' && silenceCountdown !== null && (
+                <div className="silence-countdown-pill">
+                  ⏱️ Auto-skipping in {silenceCountdown}s
+                </div>
+              )}
+
               {/* Language Pill */}
               <div className="language-hud-pill">
                 {detectedLanguage}
@@ -784,7 +881,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
               <div className="bar bar-7"></div>
             </div>
 
-            {/* Candidate Microphone Level Meter Bar (Clean visual bar without raw numbers) */}
+            {/* Candidate Microphone Level Meter Bar */}
             <div className="mic-level-monitor">
               <span className="mic-icon-lbl">{isMuted ? '🔇' : '🎙️'}</span>
               <div className="mic-meter-bar-bg">
@@ -793,7 +890,11 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
             </div>
 
             <div className="agent-state-label">
-              {agentStatus === 'listening' && '🟢 Your turn to speak. The interviewer is listening to your answer...'}
+              {agentStatus === 'listening' && (
+                silenceCountdown !== null
+                  ? `⏱️ Waiting for your answer... (${silenceCountdown}s remaining before moving forward)`
+                  : '🟢 Your turn to speak. The interviewer is listening to your answer...'
+              )}
               {agentStatus === 'thinking' && '⏳ Analyzing answer and formulating follow-up question...'}
               {agentStatus === 'speaking' && '🎙️ AI Interviewer speaking question (Listen)...'}
               {agentStatus === 'idle' && 'Connected'}
