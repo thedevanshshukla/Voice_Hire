@@ -24,38 +24,54 @@ class DeepgramSTTProvider(BaseSTTProvider):
 
         headers = {
             "Authorization": f"Token {self.api_key}",
-            "Content-Type": "audio/wav"
+            "Content-Type": "application/octet-stream"
         }
         params = {
             "model": self.model,
             "language": language,
             "smart_format": "true",
-            "punctuate": "true"
+            "punctuate": "true",
+            "filler_words": "false",
+            "keywords": [
+                "SQL:3", "PostgreSQL:3", "MySQL:3", "Redis:3", "Kafka:3", "B-Tree:3", "MVCC:3",
+                "deadlock:3", "concurrency:3", "mutex:3", "sharding:3", "replication:3",
+                "latency:3", "throughput:3", "architecture:3", "Kubernetes:3", "Docker:3",
+                "microservices:3", "REST:3", "GraphQL:3", "caching:3", "indexing:3",
+                "optimistic locking:3", "pessimistic locking:3", "consistent hashing:3", "end:3"
+            ]
         }
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.post(
-                self.base_url,
-                params=params,
-                headers=headers,
-                content=audio_data
-            )
-            response.raise_for_status()
-            data = response.json()
-            
-            transcript = ""
-            confidence = 1.0
-            results = data.get("results", {})
-            channels = results.get("channels", [])
-            if channels and len(channels) > 0:
-                alternatives = channels[0].get("alternatives", [])
-                if alternatives and len(alternatives) > 0:
-                    transcript = alternatives[0].get("transcript", "")
-                    confidence = alternatives[0].get("confidence", 1.0)
-                    
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.post(
+                    self.base_url,
+                    params=params,
+                    headers=headers,
+                    content=audio_data
+                )
+                response.raise_for_status()
+                data = response.json()
+                
+                transcript = ""
+                confidence = 1.0
+                results = data.get("results", {})
+                channels = results.get("channels", [])
+                if channels and len(channels) > 0:
+                    alternatives = channels[0].get("alternatives", [])
+                    if alternatives and len(alternatives) > 0:
+                        transcript = alternatives[0].get("transcript", "")
+                        confidence = alternatives[0].get("confidence", 1.0)
+                        
+                return STTTranscriptionResult(
+                    text=transcript,
+                    is_final=True,
+                    confidence=confidence,
+                    language=language
+                )
+        except Exception as e:
             return STTTranscriptionResult(
-                text=transcript,
+                text="",
                 is_final=True,
-                confidence=confidence,
+                confidence=0.0,
                 language=language
             )
 

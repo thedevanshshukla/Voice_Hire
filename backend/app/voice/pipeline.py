@@ -49,13 +49,13 @@ class BasicVoicePipeline:
         
         # 1. STT Phase
         stt_start = time.perf_counter()
-        if input_text is not None:
+        if audio_in and len(audio_in) > 0:
+            stt_result = await self.stt.transcribe(audio_in, language=language)
+            transcript = stt_result.text.strip() if stt_result and stt_result.text else (input_text or "")
+            stt_latency = (time.perf_counter() - stt_start) * 1000.0
+        elif input_text is not None:
             transcript = input_text
             stt_latency = 0.0
-        elif audio_in:
-            stt_result = await self.stt.transcribe(audio_in, language=language)
-            transcript = stt_result.text
-            stt_latency = (time.perf_counter() - stt_start) * 1000.0
         else:
             transcript = ""
             stt_latency = 0.0

@@ -121,6 +121,8 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
   const recognitionRef = useRef<any>(null);
   const spokenBufferRef = useRef<string>('');
   const agentStatusRef = useRef<'idle' | 'listening' | 'thinking' | 'speaking'>('idle');
@@ -325,6 +327,19 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
     }
   };
 
+  // Convert audio blob to Base64
+  const blobToBase64 = (blob: Blob): Promise<string> => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const result = reader.result as string;
+        const base64 = (result && result.includes(',')) ? result.split(',')[1] : '';
+        resolve(base64);
+      };
+      reader.readAsDataURL(blob);
+    });
+  };
+
   // Explicitly open microphone and start listening for candidate answer
   const startListeningForCandidate = () => {
     setAgentStatus('listening');
@@ -335,6 +350,14 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
 
     stopSpeechRecognition();
     startSpeechRecognition();
+
+    // Start studio audio recording for high-precision Deepgram Nova-2 STT
+    audioChunksRef.current = [];
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'inactive') {
+      try {
+        mediaRecorderRef.current.start(250);
+      } catch (_) {}
+    }
   };
 
   const stopListeningForCandidate = () => {
@@ -342,19 +365,40 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
     stopSpeechRecognition();
   };
 
-  // Request real microphone permissions and initiate Web Audio energy analyser
+  // Request real microphone permissions and initiate Web Audio energy analyser & MediaRecorder
   const setupMicrophoneCapture = async (): Promise<boolean> => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
-          autoGainControl: true
+          autoGainControl: true,
+          channelCount: 1,
+          sampleRate: 48000
         }
       });
 
       mediaStreamRef.current = stream;
       setIsMicPermissionGranted(true);
+
+      // Setup MediaRecorder for studio-grade noise-isolated audio transmission to Deepgram
+      try {
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
+          : MediaRecorder.isTypeSupported('audio/webm')
+          ? 'audio/webm'
+          : 'audio/mp4';
+
+        const recorder = new MediaRecorder(stream, { mimeType, audioBitsPerSecond: 128000 });
+        recorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) {
+            audioChunksRef.current.push(e.data);
+          }
+        };
+        mediaRecorderRef.current = recorder;
+      } catch (recErr) {
+        console.warn('MediaRecorder setup fallback:', recErr);
+      }
 
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
       audioContextRef.current = audioCtx;
@@ -573,8 +617,23 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
 
     const isSilentTurn = spokenText.includes('[Candidate remained silent');
 
+    // Extract recorded candidate audio bytes
+    let audioBase64: string | undefined = undefined;
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      try {
+        mediaRecorderRef.current.stop();
+        if (audioChunksRef.current.length > 0) {
+          const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+          audioBase64 = await blobToBase64(audioBlob);
+        }
+      } catch (recErr) {
+        console.warn('Audio export fallback:', recErr);
+      }
+    }
+
+    const candidateMsgId = `user-${Date.now()}`;
     const userMsg: TranscriptMessage = {
-      id: `user-${Date.now()}`,
+      id: candidateMsgId,
       role: 'candidate',
       stage: currentStage,
       text: isSilentTurn ? '(No response / Candidate remained silent)' : spokenText,
@@ -595,6 +654,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
         body: JSON.stringify({
           session_id: activeSession ? activeSession.session_id : roomName,
           text: spokenText,
+          audio_base64: audioBase64,
           history: historyPayload
         })
       });
@@ -607,6 +667,15 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
       if (data.detected_language) setDetectedLanguage(data.detected_language);
       if (data.current_stage) setCurrentStage(data.current_stage);
       if (data.progress_pct) setStageProgressPct(data.progress_pct);
+
+      // Update candidate message with Deepgram's high-precision transcript if available
+      if (data.transcript && data.transcript.trim() && !isSilentTurn) {
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === candidateMsgId ? { ...msg, text: data.transcript } : msg
+          )
+        );
+      }
 
       const agentMsg: TranscriptMessage = {
         id: `agent-${Date.now()}`,
