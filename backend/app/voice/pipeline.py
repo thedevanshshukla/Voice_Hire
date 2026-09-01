@@ -39,7 +39,8 @@ class BasicVoicePipeline:
 
     async def process_turn(
         self,
-        audio_in: bytes,
+        audio_in: Optional[bytes] = None,
+        input_text: Optional[str] = None,
         history: Optional[List[LLMMessage]] = None,
         system_prompt: Optional[str] = None,
         language: str = "en"
@@ -48,17 +49,26 @@ class BasicVoicePipeline:
         
         # 1. STT Phase
         stt_start = time.perf_counter()
-        stt_result = await self.stt.transcribe(audio_in, language=language)
-        stt_latency = (time.perf_counter() - stt_start) * 1000.0
+        if input_text is not None:
+            transcript = input_text
+            stt_latency = 0.0
+        elif audio_in:
+            stt_result = await self.stt.transcribe(audio_in, language=language)
+            transcript = stt_result.text
+            stt_latency = (time.perf_counter() - stt_start) * 1000.0
+        else:
+            transcript = ""
+            stt_latency = 0.0
         
         logger.info("STT Transcription completed", extra={
-            "transcript": stt_result.text,
+            "transcript": transcript,
             "stt_latency_ms": round(stt_latency, 2)
         })
 
         # 2. LLM Phase
         llm_messages = list(history or [])
-        llm_messages.append(LLMMessage(role="user", content=stt_result.text))
+        if transcript:
+            llm_messages.append(LLMMessage(role="user", content=transcript))
         
         llm_start = time.perf_counter()
         llm_result = await self.llm.generate_response(
@@ -90,7 +100,7 @@ class BasicVoicePipeline:
         logger.info("Turn completed", extra=metrics.model_dump())
 
         return PipelineTurnResult(
-            transcript=stt_result.text,
+            transcript=transcript,
             response_text=llm_result.content,
             audio_bytes=tts_result.audio_bytes,
             audio_format=tts_result.format,

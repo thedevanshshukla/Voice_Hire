@@ -95,8 +95,6 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
   const [micVolumeLevel, setMicVolumeLevel] = useState<number>(0);
   const [isMuted, setIsMuted] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [useStreamingMode] = useState(true);
-  const [showEmergencyTextInput, setShowEmergencyTextInput] = useState(false);
 
   // Session elapsed & countdown timer
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
@@ -111,16 +109,23 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
   const [evidenceReport, setEvidenceReport] = useState<EvidenceEvaluationReport | null>(null);
   const [showScorecardModal, setShowScorecardModal] = useState<boolean>(false);
 
-  const [inputText, setInputText] = useState('');
+  const [liveCandidateSpokenText, setLiveCandidateSpokenText] = useState('');
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
   const [agentStatus, setAgentStatus] = useState<'idle' | 'listening' | 'thinking' | 'speaking'>('idle');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const transcriptEndRef = useRef<HTMLDivElement>(null);
-  const wsRef = useRef<WebSocket | null>(null);
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
+  const recognitionRef = useRef<any>(null);
+  const spokenBufferRef = useRef<string>('');
+  const agentStatusRef = useRef<'idle' | 'listening' | 'thinking' | 'speaking'>('idle');
+
+  // Keep agentStatusRef in sync with agentStatus state
+  useEffect(() => {
+    agentStatusRef.current = agentStatus;
+  }, [agentStatus]);
 
   // Fetch session details if routed directly via URL
   useEffect(() => {
@@ -159,14 +164,16 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, liveCandidateSpokenText]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       stopMicrophoneStream();
-      if (wsRef.current) wsRef.current.close();
       cancelActiveAudio();
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch (_) {}
+      }
     };
   }, []);
 
@@ -192,6 +199,66 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
     if (audioContextRef.current) {
       audioContextRef.current.close().catch(() => {});
       audioContextRef.current = null;
+    }
+  };
+
+  // Start continuous browser Speech Recognition for candidate
+  const startSpeechRecognition = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      console.warn('Web Speech API not supported in this browser; fallback to energy VAD & emergency text.');
+      return;
+    }
+
+    try {
+      const rec = new SpeechRecognition();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = detectedLanguage === 'Hindi' ? 'hi-IN' : detectedLanguage === 'Hinglish' ? 'hi-IN' : 'en-US';
+
+      rec.onresult = (event: any) => {
+        if (agentStatusRef.current !== 'listening') return;
+
+        let interim = '';
+        let finalChunk = '';
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const trans = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            finalChunk += trans + ' ';
+          } else {
+            interim += trans;
+          }
+        }
+
+        if (finalChunk) {
+          spokenBufferRef.current += (spokenBufferRef.current ? ' ' : '') + finalChunk.trim();
+        }
+
+        const fullSpoken = (spokenBufferRef.current + ' ' + interim).trim();
+        setLiveCandidateSpokenText(fullSpoken);
+        if (fullSpoken.length > 0) {
+          setVadState('speaking');
+        }
+      };
+
+      rec.onerror = (e: any) => {
+        if (e.error !== 'no-speech') {
+          console.warn('SpeechRecognition error:', e.error);
+        }
+      };
+
+      rec.onend = () => {
+        // Auto restart if still connected and in listening mode
+        if (isConnected && agentStatusRef.current === 'listening') {
+          try { rec.start(); } catch (_) {}
+        }
+      };
+
+      rec.start();
+      recognitionRef.current = rec;
+    } catch (err) {
+      console.warn('Failed to initialize SpeechRecognition:', err);
     }
   };
 
@@ -241,17 +308,26 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
           if (!isCandidateSpeaking) {
             isCandidateSpeaking = true;
             setVadState('speaking');
-            if (agentStatus === 'speaking') {
+            if (agentStatusRef.current === 'speaking') {
               handleInterrupt();
             }
           }
         } else if (isCandidateSpeaking) {
-          // Candidate paused or stopped
+          // Candidate paused or stopped speaking
           const silenceDuration = Date.now() - lastSpeechTime;
           if (silenceDuration > 3500) {
             isCandidateSpeaking = false;
             setVadState('endpoint');
-            // Auto-complete turn if candidate spoke
+            
+            // Auto-complete turn when candidate stops speaking for >3.5 seconds
+            if (agentStatusRef.current === 'listening') {
+              const textToSubmit = spokenBufferRef.current.trim() || liveCandidateSpokenText.trim();
+              if (textToSubmit.length > 3) {
+                spokenBufferRef.current = '';
+                setLiveCandidateSpokenText('');
+                submitSpokenTurn(textToSubmit);
+              }
+            }
           } else if (silenceDuration > 800) {
             setVadState('paused');
           }
@@ -273,24 +349,33 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
   const playAudio = (audioBase64: string) => {
     try {
       cancelActiveAudio();
+      setAgentStatus('speaking');
       const audio = new Audio(`data:audio/mp3;base64,${audioBase64}`);
       activeAudioRef.current = audio;
+      
       audio.onended = () => {
         setAgentStatus('listening');
         setVadState('idle');
+        spokenBufferRef.current = '';
+        setLiveCandidateSpokenText('');
       };
-      audio.play().catch((e) => console.warn('Audio autoplay blocked or failed:', e));
+      
+      audio.play().catch((e) => {
+        console.warn('Audio autoplay blocked or failed:', e);
+        // Fallback to listening even if audio play failed
+        setAgentStatus('listening');
+        setVadState('idle');
+      });
     } catch (e) {
       console.error('Audio play error:', e);
+      setAgentStatus('listening');
+      setVadState('idle');
     }
   };
 
   const handleInterrupt = () => {
     cancelActiveAudio();
     setAgentStatus('listening');
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ action: 'interrupt', reason: 'barge_in' }));
-    }
   };
 
   const refreshScorecardAndEvidence = async () => {
@@ -310,6 +395,75 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
       }
     } catch (e) {
       console.warn('Could not fetch updated scorecard/evidence:', e);
+    }
+  };
+
+  // Submit candidate spoken turn to backend
+  const submitSpokenTurn = async (spokenText: string) => {
+    if (isProcessing || !spokenText.trim()) return;
+
+    setIsProcessing(true);
+    setAgentStatus('thinking');
+    setVadState('endpoint');
+
+    const userMsg: TranscriptMessage = {
+      id: `user-${Date.now()}`,
+      role: 'candidate',
+      stage: currentStage,
+      text: spokenText,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    };
+
+    setMessages((prev) => [...prev, userMsg]);
+
+    try {
+      const historyPayload = [...messages, userMsg].map((m) => ({
+        role: m.role === 'interviewer' ? 'assistant' : 'user',
+        content: m.text
+      }));
+
+      const response = await fetch(`${apiUrl}/api/voice/turn`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: activeSession ? activeSession.session_id : roomName,
+          text: spokenText,
+          history: historyPayload
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Turn endpoint error: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      if (data.detected_language) setDetectedLanguage(data.detected_language);
+      if (data.current_stage) setCurrentStage(data.current_stage);
+      if (data.progress_pct) setStageProgressPct(data.progress_pct);
+
+      const agentMsg: TranscriptMessage = {
+        id: `agent-${Date.now()}`,
+        role: 'interviewer',
+        stage: data.current_stage || currentStage,
+        text: data.response_text,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      };
+
+      setMessages((prev) => [...prev, agentMsg]);
+
+      if (data.audio_base64) {
+        playAudio(data.audio_base64);
+      } else {
+        setAgentStatus('listening');
+        setVadState('idle');
+      }
+    } catch (err: any) {
+      console.error('Turn error:', err);
+      setErrorMsg(err.message || 'Error processing speech turn');
+      setAgentStatus('listening');
+      setVadState('idle');
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -337,33 +491,61 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
 
       await response.json();
       setIsConnected(true);
-      setAgentStatus('listening');
+      setAgentStatus('thinking');
 
-      // Initial welcoming greeting message
-      const initialGreeting: TranscriptMessage = {
-        id: `agent-${Date.now()}`,
-        role: 'interviewer',
-        stage: 'greeting',
-        text: `Hello ${candidateName}, welcome to your technical interview. I'll be guiding you through today's session. To get started, please share a brief introduction of yourself and your recent engineering projects.`,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-      };
-      setMessages([initialGreeting]);
+      // Request opening greeting turn from AI Interviewer
+      const turnResp = await fetch(`${apiUrl}/api/voice/turn`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessId,
+          text: '',
+          history: []
+        })
+      });
 
-      // Trigger initial spoken prompt
-      handleSendStreamingTurn("Hello, I am ready to begin the interview.", "init-greeting");
+      if (turnResp.ok) {
+        const turnData = await turnResp.json();
+        const initialGreeting: TranscriptMessage = {
+          id: `agent-${Date.now()}`,
+          role: 'interviewer',
+          stage: turnData.current_stage || 'greeting',
+          text: turnData.response_text || `Hello ${candidateName}, welcome to your technical interview. I will be conducting your assessment today. To get started, please tell me about yourself and your recent engineering projects.`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+        };
+        setMessages([initialGreeting]);
+
+        if (turnData.audio_base64) {
+          playAudio(turnData.audio_base64);
+        } else {
+          setAgentStatus('listening');
+        }
+      } else {
+        const fallbackGreeting: TranscriptMessage = {
+          id: `agent-${Date.now()}`,
+          role: 'interviewer',
+          stage: 'greeting',
+          text: `Hello ${candidateName}, welcome to your technical assessment. I will be your interviewer today. To begin, please introduce yourself and tell me about a recent complex system or project you worked on.`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+        };
+        setMessages([fallbackGreeting]);
+        setAgentStatus('listening');
+      }
+
+      startSpeechRecognition();
     } catch (err: any) {
       console.error('Connection error:', err);
       setErrorMsg(err.message || 'Failed to connect to voice room');
       setIsConnected(false);
+      setAgentStatus('idle');
     }
   };
 
   const handleDisconnect = () => {
     cancelActiveAudio();
     stopMicrophoneStream();
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch (_) {}
     }
     setIsConnected(false);
     setAgentStatus('idle');
@@ -372,173 +554,6 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
     // Route to final report view
     const sessId = activeSession ? activeSession.session_id : roomName;
     navigate(`/report/${sessId}`);
-  };
-
-  // Process streaming turn over WebSocket
-  const handleSendStreamingTurn = async (textToSend: string, _userMsgId: string) => {
-    cancelActiveAudio();
-    const wsUrl = apiUrl.replace(/^http/, 'ws') + '/api/voice/stream/ws';
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-
-    const agentMsgId = `agent-${Date.now()}`;
-    let fullAgentText = '';
-
-    ws.onopen = () => {
-      setAgentStatus('thinking');
-      setVadState('endpoint');
-      const historyPayload = messages.map((m) => ({
-        role: m.role === 'interviewer' ? 'assistant' : 'user',
-        content: m.text
-      }));
-
-      ws.send(JSON.stringify({
-        action: 'turn',
-        text: textToSend,
-        session_id: activeSession ? activeSession.session_id : roomName,
-        history: historyPayload
-      }));
-
-      // Push initial placeholder streaming bubble
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: agentMsgId,
-          role: 'interviewer',
-          stage: currentStage,
-          text: '',
-          isStreaming: true,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-        }
-      ]);
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data);
-        
-        if (payload.event_type === 'stage_transition') {
-          setCurrentStage(payload.stage);
-          setStageProgressPct(payload.progress_pct);
-        } else if (payload.event_type === 'token') {
-          fullAgentText += payload.text;
-          setAgentStatus('speaking');
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === agentMsgId ? { ...msg, text: fullAgentText } : msg
-            )
-          );
-        } else if (payload.event_type === 'audio_chunk' && payload.audio_chunk_b64) {
-          playAudio(payload.audio_chunk_b64);
-        } else if (payload.event_type === 'interrupted') {
-          cancelActiveAudio();
-          setAgentStatus('listening');
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === agentMsgId
-                ? { ...msg, text: fullAgentText + ' [interrupted]', isStreaming: false, wasInterrupted: true }
-                : msg
-            )
-          );
-        }
-      } catch (err) {
-        console.error('WebSocket parse error:', err);
-      }
-    };
-
-    ws.onclose = () => {
-      setMessages((prev) =>
-        prev.map((msg) => (msg.id === agentMsgId ? { ...msg, isStreaming: false } : msg))
-      );
-    };
-
-    ws.onerror = (err) => {
-      console.error('WebSocket error:', err);
-      setAgentStatus('listening');
-      setVadState('idle');
-    };
-  };
-
-  const handleSendTurn = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inputText.trim() || isProcessing) return;
-
-    const currentText = inputText.trim();
-    setInputText('');
-    setVadState('speaking');
-
-    const userMsgId = `user-${Date.now()}`;
-    const userMsg: TranscriptMessage = {
-      id: userMsgId,
-      role: 'candidate',
-      stage: currentStage,
-      text: currentText,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    };
-
-    setMessages((prev) => [...prev, userMsg]);
-
-    if (useStreamingMode) {
-      handleSendStreamingTurn(currentText, userMsgId);
-      return;
-    }
-
-    setIsProcessing(true);
-    setAgentStatus('thinking');
-
-    try {
-      const historyPayload = messages.map((m) => ({
-        role: m.role === 'interviewer' ? 'assistant' : 'user',
-        content: m.text
-      }));
-
-      const response = await fetch(`${apiUrl}/api/voice/turn`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          session_id: activeSession ? activeSession.session_id : roomName,
-          text: currentText,
-          history: historyPayload
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`Turn endpoint error: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      setAgentStatus('speaking');
-      setVadState('endpoint');
-      if (data.detected_language) setDetectedLanguage(data.detected_language);
-      if (data.current_stage) setCurrentStage(data.current_stage);
-      if (data.progress_pct) setStageProgressPct(data.progress_pct);
-
-      const agentMsg: TranscriptMessage = {
-        id: `agent-${Date.now()}`,
-        role: 'interviewer',
-        stage: data.current_stage || currentStage,
-        text: data.response_text,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-      };
-
-      setMessages((prev) => [...prev, agentMsg]);
-
-      if (data.audio_base64) {
-        playAudio(data.audio_base64);
-      }
-
-      setTimeout(() => {
-        setAgentStatus('listening');
-        setVadState('idle');
-      }, 2000);
-    } catch (err: any) {
-      console.error('Turn error:', err);
-      setErrorMsg(err.message || 'Error processing speech turn');
-      setAgentStatus('listening');
-      setVadState('idle');
-    } finally {
-      setIsProcessing(false);
-    }
   };
 
   const getStageIndex = (stageId: string) => STAGES.findIndex((s) => s.id === stageId);
@@ -641,7 +656,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
         </div>
       )}
 
-      {/* Recruiter Evaluation Modal (Protected from candidate screen) */}
+      {/* Recruiter Evaluation Modal */}
       {showScorecardModal && (
         <div className="scorecard-modal-backdrop" onClick={() => setShowScorecardModal(false)}>
           <div className="scorecard-modal" onClick={(e) => e.stopPropagation()}>
@@ -737,12 +752,12 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
                 <span>Recording Active</span>
               </div>
 
-              {/* VAD State Pill */}
-              <div className={`vad-state-pill ${vadState}`}>
-                {vadState === 'speaking' && 'Speaking'}
-                {vadState === 'paused' && 'Pausing'}
-                {vadState === 'endpoint' && 'Processing Turn'}
-                {vadState === 'idle' && 'Listening'}
+              {/* Turn State Badge */}
+              <div className={`turn-state-badge ${agentStatus}`}>
+                {agentStatus === 'speaking' && '🎙️ AI Interviewer Speaking...'}
+                {agentStatus === 'listening' && (vadState === 'speaking' ? '🗣️ Candidate Speaking...' : '🟢 Listening (Your Turn to Speak)')}
+                {agentStatus === 'thinking' && '⏳ Formulating Next Question...'}
+                {agentStatus === 'idle' && 'Connected'}
               </div>
 
               {/* Language Pill */}
@@ -769,19 +784,18 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
               <div className="bar bar-7"></div>
             </div>
 
-            {/* Candidate Microphone Level Meter Bar */}
+            {/* Candidate Microphone Level Meter Bar (Clean visual bar without raw numbers) */}
             <div className="mic-level-monitor">
               <span className="mic-icon-lbl">{isMuted ? '🔇' : '🎙️'}</span>
               <div className="mic-meter-bar-bg">
                 <div className="mic-meter-bar-fill" style={{ width: `${isMuted ? 0 : micVolumeLevel}%` }}></div>
               </div>
-              <span className="mic-level-pct">{isMuted ? 'Muted' : `${micVolumeLevel}%`}</span>
             </div>
 
             <div className="agent-state-label">
-              {agentStatus === 'listening' && 'Listening to candidate response... (Speak into microphone)'}
-              {agentStatus === 'thinking' && 'Interviewer formulating follow-up question...'}
-              {agentStatus === 'speaking' && 'Interviewer speaking (You can interrupt anytime)...'}
+              {agentStatus === 'listening' && '🟢 Your turn to speak. The interviewer is listening to your answer...'}
+              {agentStatus === 'thinking' && '⏳ Analyzing answer and formulating follow-up question...'}
+              {agentStatus === 'speaking' && '🎙️ AI Interviewer speaking question (Listen)...'}
               {agentStatus === 'idle' && 'Connected'}
             </div>
           </div>
@@ -805,56 +819,41 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
                     </div>
 
                     <div className="bubble-content">
-                      {msg.text || (msg.isStreaming ? <span className="typing-dots"><span>.</span><span>.</span><span>.</span></span> : '')}
+                      {msg.text}
                     </div>
                   </div>
                 </div>
               ))}
+
+              {/* Live In-Progress Spoken Speech Bubble */}
+              {agentStatus === 'listening' && liveCandidateSpokenText && (
+                <div className="chat-bubble-wrapper candidate">
+                  <div className="chat-bubble candidate live-preview">
+                    <div className="bubble-header">
+                      <span className="bubble-sender">{candidateName} (Speaking...)</span>
+                      <span className="bubble-stage-badge">LIVE MIC</span>
+                    </div>
+                    <div className="bubble-content">
+                      {liveCandidateSpokenText}
+                      <span className="recording-dot" style={{ display: 'inline-block', marginLeft: '6px' }}></span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div ref={transcriptEndRef} />
             </div>
 
             {/* Voice-Only Bottom Action Controls */}
-            <div className="voice-only-controls-bar">
+            <div className="voice-only-controls-bar" style={{ justifyContent: 'center' }}>
               <button
                 type="button"
                 className={`btn btn-mic ${isMuted ? 'muted' : 'active'}`}
                 onClick={() => setIsMuted(!isMuted)}
               >
-                {isMuted ? '🔇 Unmute Microphone' : '🎙️ Microphone Active'}
-              </button>
-
-              <button
-                type="button"
-                className="emergency-text-toggle"
-                onClick={() => setShowEmergencyTextInput(!showEmergencyTextInput)}
-              >
-                {showEmergencyTextInput ? 'Hide Text Fallback' : 'Audio Issues? Type Answer'}
+                {isMuted ? '🔇 Microphone Muted (Click to Unmute)' : '🎙️ Microphone Active'}
               </button>
             </div>
-
-            {/* Emergency Text Fallback Input */}
-            {showEmergencyTextInput && (
-              <div className="chat-input-bar">
-                <form onSubmit={handleSendTurn} className="input-form">
-                  <input
-                    type="text"
-                    value={inputText}
-                    onChange={(e) => setInputText(e.target.value)}
-                    placeholder="Type candidate response here..."
-                    className="input-field"
-                    disabled={isProcessing}
-                  />
-                  <button
-                    type="submit"
-                    className="btn btn-primary"
-                    disabled={isProcessing || !inputText.trim()}
-                  >
-                    <span>Send</span>
-                    <span>→</span>
-                  </button>
-                </form>
-              </div>
-            )}
           </div>
         </div>
       )}

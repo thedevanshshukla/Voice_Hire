@@ -14,6 +14,14 @@ class DeepgramSTTProvider(BaseSTTProvider):
         self.base_url = "https://api.deepgram.com/v1/listen"
 
     async def transcribe(self, audio_data: bytes, language: str = "en") -> STTTranscriptionResult:
+        if not audio_data or len(audio_data) < 100 or audio_data == b"\x00" * len(audio_data):
+            return STTTranscriptionResult(
+                text="",
+                is_final=True,
+                confidence=1.0,
+                language=language
+            )
+
         headers = {
             "Authorization": f"Token {self.api_key}",
             "Content-Type": "audio/wav"

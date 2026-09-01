@@ -84,6 +84,11 @@ class DetectLanguageResponse(BaseModel):
     detected_language: str
     confidence: float
 
+class CreateSessionRequest(BaseModel):
+    candidate_name: str = Field(default="Candidate")
+    user_email: Optional[str] = None
+    config: InterviewConfig
+
 class VoiceTurnRequest(BaseModel):
     session_id: Optional[str] = None
     audio_base64: Optional[str] = Field(None, description="Base64-encoded audio bytes (optional if text is provided)")
@@ -326,24 +331,29 @@ async def get_interview_stages(duration_minutes: int = 30) -> List[Dict[str, Any
     return [b.model_dump() for b in budgets]
 
 @router.post("/api/interview/session", response_model=InterviewSession)
-async def create_interview_session(
-    config: InterviewConfig,
-    candidate_name: str = "Candidate",
-    user_email: Optional[str] = None
-) -> InterviewSession:
-    email = user_email or config.user_email
+async def create_interview_session(req: Request) -> InterviewSession:
+    body = await req.json()
+    if "config" in body:
+        cfg = InterviewConfig(**body["config"])
+        cand_name = body.get("candidate_name", "Candidate")
+        u_email = body.get("user_email") or cfg.user_email
+    else:
+        cfg = InterviewConfig(**body)
+        cand_name = "Candidate"
+        u_email = cfg.user_email
+
     session = InterviewSession(
-        candidate_name=candidate_name,
-        user_email=email,
-        config=config,
+        candidate_name=cand_name,
+        user_email=u_email,
+        config=cfg,
         status=SessionStatus.CONFIGURED,
         current_stage=InterviewStage.GREETING
     )
     saved = await InterviewSessionRepository.create_session(session)
-    active_state_machines[session.session_id] = InterviewStateMachine(config=config, initial_stage=InterviewStage.GREETING)
-    active_adaptive_engines[session.session_id] = AdaptiveQuestionEngine(config=config)
+    active_state_machines[session.session_id] = InterviewStateMachine(config=cfg, initial_stage=InterviewStage.GREETING)
+    active_adaptive_engines[session.session_id] = AdaptiveQuestionEngine(config=cfg)
     active_memory_engines[session.session_id] = InterviewMemoryEngine()
-    active_languages[session.session_id] = config.language
+    active_languages[session.session_id] = cfg.language
     return saved
 
 @router.get("/api/interview/session/{session_id}", response_model=InterviewSession)
@@ -622,7 +632,8 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
             voice_pipeline.stt.default_response = req.text
 
         turn_result: PipelineTurnResult = await voice_pipeline.process_turn(
-            audio_in=audio_bytes,
+            audio_in=audio_bytes if not req.text else None,
+            input_text=req.text,
             history=history_msgs,
             system_prompt=system_prompt,
             language="hi" if active_lang in [InterviewLanguage.HINDI, InterviewLanguage.HINGLISH] else "en"
@@ -711,7 +722,7 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
             metrics=turn_result.metrics.model_dump()
         )
     except Exception as e:
-        logger.error("Turn processing failed", extra={"error": str(e)})
+        logger.error(f"Turn processing failed: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Turn processing failed: {str(e)}"
