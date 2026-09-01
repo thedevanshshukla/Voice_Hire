@@ -35,10 +35,18 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
   return <>{children}</>;
 };
 
-const NavigationBar: React.FC<{ backendHealth: HealthStatus | null; loading: boolean; error: boolean }> = ({
+const NavigationBar: React.FC<{ 
+  backendHealth: HealthStatus | null; 
+  loading: boolean; 
+  error: boolean;
+  theme: 'dark' | 'light';
+  toggleTheme: () => void;
+}> = ({
   backendHealth: _backendHealth,
   loading,
-  error
+  error,
+  theme,
+  toggleTheme
 }) => {
   const { user, isAuthenticated, logout } = useAuth();
   const navigate = useNavigate();
@@ -50,7 +58,15 @@ const NavigationBar: React.FC<{ backendHealth: HealthStatus | null; loading: boo
         <span>VoiceHire</span>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+        <button 
+          className="btn-theme-toggle" 
+          onClick={toggleTheme}
+          title={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}
+        >
+          {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
+        </button>
+
         <div className="status-badge">
           <span 
             className={`status-dot ${error ? 'disconnected' : 'healthy'}`}
@@ -180,6 +196,19 @@ function App() {
 
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    return (localStorage.getItem('vh_theme') as 'dark' | 'light') || 'dark';
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('vh_theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  };
+
   useEffect(() => {
     const checkHealth = async () => {
       try {
@@ -208,7 +237,13 @@ function App() {
     <AuthProvider apiUrl={API_URL}>
       <BrowserRouter>
         <div className="app-container">
-          <NavigationBar backendHealth={backendHealth} loading={loading} error={error} />
+          <NavigationBar 
+            backendHealth={backendHealth} 
+            loading={loading} 
+            error={error} 
+            theme={theme}
+            toggleTheme={toggleTheme}
+          />
 
           <main className="main-content">
             <Routes>

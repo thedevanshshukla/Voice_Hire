@@ -346,7 +346,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
     setVadState('idle');
     spokenBufferRef.current = '';
     setLiveCandidateSpokenText('');
-    setSilenceCountdown(5);
+    setSilenceCountdown(8);
 
     stopSpeechRecognition();
     startSpeechRecognition();
@@ -439,20 +439,20 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
             }
           }
         } else if (isCandidateSpeaking && agentStatusRef.current === 'listening') {
-          // Candidate paused or stopped speaking
+          // Candidate paused or stopped speaking (Wait 8 full seconds of silence before auto-submitting)
           const silenceDuration = Date.now() - lastSpeechTime;
-          if (silenceDuration > 3500) {
+          if (silenceDuration > 8000) {
             isCandidateSpeaking = false;
             setVadState('endpoint');
             
-            // Auto-complete turn when candidate stops speaking for >3.5 seconds
+            // Auto-complete turn when candidate stops speaking for >8.0 seconds
             const textToSubmit = spokenBufferRef.current.trim() || liveCandidateSpokenText.trim();
             if (textToSubmit.length > 2) {
               spokenBufferRef.current = '';
               setLiveCandidateSpokenText('');
               submitSpokenTurn(textToSubmit);
             }
-          } else if (silenceDuration > 800) {
+          } else if (silenceDuration > 1000) {
             setVadState('paused');
           }
         }
@@ -1022,6 +1022,39 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
               )}
             </div>
 
+            {/* Prominent Dynamic Status Hero Banners */}
+            {agentStatus === 'speaking' && (
+              <div className="ai-speaking-hero-banner">
+                <div className="ai-pulse-halo">
+                  <span className="ai-pulse-core">🤖</span>
+                  <div className="pulse-ring ring-1"></div>
+                  <div className="pulse-ring ring-2"></div>
+                </div>
+                <div className="ai-speaking-info">
+                  <div className="ai-speaking-title">AI INTERVIEWER SPEAKING QUESTION</div>
+                  <div className="ai-speaking-desc">Listen carefully to the question. The microphone will activate as soon as speech finishes.</div>
+                </div>
+              </div>
+            )}
+
+            {agentStatus === 'listening' && (
+              <div className="candidate-turn-hero-banner">
+                <div className="mic-turn-icon-pulse">🎙️</div>
+                <div className="turn-banner-info">
+                  <div className="turn-banner-headline">YOUR TURN TO SPEAK NOW</div>
+                  <div className="turn-banner-subtext">
+                    {silenceCountdown !== null
+                      ? `Microphone is LIVE & recording your answer (${silenceCountdown}s silence countdown)`
+                      : `Microphone is LIVE & recording your answer...`}
+                  </div>
+                </div>
+                <div className="turn-live-pill">
+                  <span className="live-pulse-dot"></span>
+                  <span>MIC ACTIVE • LISTENING</span>
+                </div>
+              </div>
+            )}
+
             {/* Live Audio Waveform & Mic Level Meter */}
             <div className={`waveform-visualizer ${agentStatus}`}>
               <div className="bar bar-1"></div>
@@ -1031,6 +1064,9 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
               <div className="bar bar-5"></div>
               <div className="bar bar-6"></div>
               <div className="bar bar-7"></div>
+              <div className="bar bar-8"></div>
+              <div className="bar bar-9"></div>
+              <div className="bar bar-10"></div>
             </div>
 
             {/* Candidate Microphone Level Meter Bar */}
@@ -1039,17 +1075,6 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
               <div className="mic-meter-bar-bg">
                 <div className="mic-meter-bar-fill" style={{ width: `${isMuted ? 0 : micVolumeLevel}%` }}></div>
               </div>
-            </div>
-
-            <div className="agent-state-label">
-              {agentStatus === 'listening' && (
-                silenceCountdown !== null
-                  ? `⏱️ Waiting for your answer... (${silenceCountdown}s remaining before moving forward)`
-                  : '🟢 Your turn to speak. The interviewer is listening to your answer...'
-              )}
-              {agentStatus === 'thinking' && '⏳ Analyzing answer and formulating follow-up question...'}
-              {agentStatus === 'speaking' && '🎙️ AI Interviewer speaking question (Listen)...'}
-              {agentStatus === 'idle' && 'Connected'}
             </div>
           </div>
 
