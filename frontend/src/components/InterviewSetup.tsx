@@ -95,6 +95,11 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
       return;
     }
 
+    if (!resumeText.trim()) {
+      setErrorMsg('Candidate Resume is compulsory. Please upload your resume file (.pdf, .txt, .docx) or paste your resume text to begin.');
+      return;
+    }
+
     setErrorMsg(null);
     setIsSubmitting(true);
 
@@ -212,7 +217,7 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
           <div className="form-group">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
               <label className="section-label" style={{ margin: 0 }}>
-                Candidate Resume / Work History
+                Candidate Resume / Work History <span style={{ color: '#f87171' }}>(Compulsory *)</span>
               </label>
               {resumeText && (
                 <button

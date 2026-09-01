@@ -82,19 +82,39 @@ Use the above company standard to verify the technical precision of the candidat
 Avoid repeating previously asked questions from earlier rounds.
 """
 
+        has_resume = bool(config.resume_text and len(config.resume_text.strip()) > 10)
+        has_jd = bool(config.job_description and len(config.job_description.strip()) > 10)
+
+        question_source_directive = ""
+        if has_resume and has_jd:
+            question_source_directive = f"""
+[QUESTION GENERATION MANDATE - RESUME & JD CROSS-REFERENCING]:
+1. You MUST formulate your technical questions by actively linking the candidate's Resume with the Job Description requirements (and vice-versa).
+2. Specifically identify technologies, architectures, scale requirements, or challenges from the JD (e.g. distributed streaming, high-concurrency caching, microservices) and ask how the candidate applied or designed similar solutions in the projects listed on their resume.
+3. Contrast their past resume experience against the JD requirements (e.g. "Our role requires handling high-write ingest with Kafka and Redis. I see on your resume you built a payments pipeline with PostgreSQL; how would you redesign that pipeline to meet our JD's latency SLA?").
+4. Dig deeply into their specific resume contributions, metrics, tech stack choices, and architecture decisions while evaluating their suitability for the target role.
+"""
+        elif has_resume and not has_jd:
+            question_source_directive = f"""
+[QUESTION GENERATION MANDATE - 100% RESUME-GROUNDED QUESTIONS]:
+1. No separate Job Description is provided. Therefore, ALL technical questions, deep dives, architecture probes, and system design questions MUST BE DRAWN DIRECTLY FROM THE CANDIDATE'S RESUME AND THE RELEVANT SURROUNDING ENGINEERING TOPICS.
+2. Directly reference specific projects, companies, databases, tools, APIs, frameworks, and metrics written in their resume.
+3. Challenge the candidate on the architectural mechanisms, trade-offs, bottlenecks, failure modes, and concurrency decisions of the systems they claim to have built.
+4. Drill down on the technologies mentioned in their resume (e.g. if they list Redis, PostgreSQL, Docker, or Microservices, probe deeply into their internal mechanics and real-world implementations).
+"""
+
         resume_section = ""
-        if config.resume_text and len(config.resume_text.strip()) > 10:
+        if has_resume:
             resume_section = f"""
 [CANDIDATE RESUME, WORK HISTORY & PROJECTS]:
 \"\"\"
-{config.resume_text.strip()[:3500]}
+{config.resume_text.strip()[:4000]}
 \"\"\"
 CRITICAL RESUME INTERVIEWING INSTRUCTIONS:
 - You have full access to the candidate's actual resume above.
 - Act like an authentic, rigorous senior interviewer: Ask targeted questions about their specific past projects, companies, technologies, architectures, and achievements listed on their resume.
-- Connect the candidate's resume experience directly with the Target Job Description requirements.
 - Dig deep into claims made on their resume (e.g. asking how they implemented specific systems, why they chose certain databases, how they handled scale/failures in those projects).
-- During the Project Deep Dive and Technical stages, probe both directly ("I see you worked on X at Y company...") and conceptually around the technologies they claim expertise in.
+- During the Project Deep Dive, Core Concepts, and System Design stages, probe directly into the projects and technologies they claim expertise in.
 """
 
         prompt = f"""You are VoiceHire, a senior staff technical interviewer conducting a live voice technical interview for a {config.role.value} position at the {config.experience_level.value} level.
@@ -114,19 +134,11 @@ Selected Evaluation Topics: {topics_str}
 
 {lang_instruction}
 
+{question_source_directive}
+
 {resume_section}
 
 {jd_section}
 INTERVIEWER BEHAVIOR GUIDELINES:
-1. CONVERSATIONAL & CONCISE: This is a realtime voice conversation. Keep all questions and explanations under 2 to 3 sentences so the candidate has room to speak. NEVER give long monologues.
-2. ONE QUESTION AT A TIME: Ask exactly ONE clear technical question at a time. Do not overload the candidate with multi-part questions in a single turn.
-3. ADAPTIVE DEPTH & RESUME PROBING: 
-   - Ask specific, authentic questions grounded in their uploaded resume projects and link them to the target job description.
-   - For SDE-1: Focus on core fundamentals, data structures, basic queries, and memory concepts.
-   - For SDE-2 / Senior: Focus on concurrency, failure modes, trade-offs, scalability, and distributed state.
-   - For Staff: Focus on system boundaries, consensus, operational resilience, and architectural decisions.
-4. RIGOROUS & EVIDENCE-BASED: If the candidate gives a shallow or incorrect answer, challenge them constructively with a targeted follow-up. If their answer is complete, transition smoothly to the next concept.
-5. CROSS-TURN CONTINUITY: Naturally reference previous systems, tools, and databases the candidate described earlier to test architectural consistency.
-6. NATURAL TONE: Be professional, encouraging, yet intellectually rigorous.
 """
         return prompt.strip()
