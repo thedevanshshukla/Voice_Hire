@@ -125,6 +125,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
   const spokenBufferRef = useRef<string>('');
   const agentStatusRef = useRef<'idle' | 'listening' | 'thinking' | 'speaking'>('idle');
   const silenceTimerRef = useRef<any>(null);
+  const keepAliveIntervalRef = useRef<any>(null);
 
   // Keep agentStatusRef in sync with agentStatus state
   useEffect(() => {
@@ -134,7 +135,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
   // Handle 5-second silence countdown ticking
   useEffect(() => {
     if (silenceCountdown === null) {
-      if (silenceTimerRef.current) clearInterval(silenceTimerRef.current);
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
       return;
     }
 
@@ -210,6 +211,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
       stopMicrophoneStream();
       cancelActiveAudio();
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      if (keepAliveIntervalRef.current) clearInterval(keepAliveIntervalRef.current);
       if (recognitionRef.current) {
         try { recognitionRef.current.stop(); } catch (_) {}
       }
@@ -230,6 +232,10 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
     }
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
+    }
+    if (keepAliveIntervalRef.current) {
+      clearInterval(keepAliveIntervalRef.current);
+      keepAliveIntervalRef.current = null;
     }
   };
 
@@ -259,6 +265,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
       rec.lang = detectedLanguage === 'Hindi' ? 'hi-IN' : detectedLanguage === 'Hinglish' ? 'hi-IN' : 'en-US';
 
       rec.onresult = (event: any) => {
+        // ONLY capture candidate speech when in listening mode (ignores laptop speaker feedback)
         if (agentStatusRef.current !== 'listening') return;
 
         let interim = '';
@@ -346,20 +353,19 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
         const normalized = Math.min(100, Math.round((avg / 128) * 100));
         setMicVolumeLevel(normalized);
 
-        const SPEECH_THRESHOLD = 15;
+        const SPEECH_THRESHOLD = 18;
         if (normalized > SPEECH_THRESHOLD && !isMuted) {
           lastSpeechTime = Date.now();
-          // Clear silence countdown immediately when sound is detected
-          setSilenceCountdown(null);
 
-          if (!isCandidateSpeaking) {
-            isCandidateSpeaking = true;
-            setVadState('speaking');
-            if (agentStatusRef.current === 'speaking') {
-              handleInterrupt();
+          // Crucial: Only process candidate voice when the AI is NOT speaking (avoids speaker acoustic echo loop)
+          if (agentStatusRef.current === 'listening') {
+            setSilenceCountdown(null);
+            if (!isCandidateSpeaking) {
+              isCandidateSpeaking = true;
+              setVadState('speaking');
             }
           }
-        } else if (isCandidateSpeaking) {
+        } else if (isCandidateSpeaking && agentStatusRef.current === 'listening') {
           // Candidate paused or stopped speaking
           const silenceDuration = Date.now() - lastSpeechTime;
           if (silenceDuration > 3500) {
@@ -367,13 +373,11 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
             setVadState('endpoint');
             
             // Auto-complete turn when candidate stops speaking for >3.5 seconds
-            if (agentStatusRef.current === 'listening') {
-              const textToSubmit = spokenBufferRef.current.trim() || liveCandidateSpokenText.trim();
-              if (textToSubmit.length > 2) {
-                spokenBufferRef.current = '';
-                setLiveCandidateSpokenText('');
-                submitSpokenTurn(textToSubmit);
-              }
+            const textToSubmit = spokenBufferRef.current.trim() || liveCandidateSpokenText.trim();
+            if (textToSubmit.length > 2) {
+              spokenBufferRef.current = '';
+              setLiveCandidateSpokenText('');
+              submitSpokenTurn(textToSubmit);
             }
           } else if (silenceDuration > 800) {
             setVadState('paused');
@@ -393,7 +397,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
     }
   };
 
-  // Speak AI interviewer question aloud with robust fallback to SpeechSynthesis
+  // Speak AI interviewer question aloud with sentence chunking & SpeechSynthesis keep-alive
   const speakQuestionAloud = (text: string, audioBase64?: string) => {
     cancelActiveAudio();
     setAgentStatus('speaking');
@@ -439,31 +443,64 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
       return;
     }
     window.speechSynthesis.cancel();
+    if (keepAliveIntervalRef.current) clearInterval(keepAliveIntervalRef.current);
+
     const cleanText = text.replace(/[*_#`]/g, '').trim();
     if (!cleanText) {
       onDone();
       return;
     }
 
-    const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.rate = 1.0;
-    utterance.pitch = 1.0;
+    // Split text into natural sentence chunks so Chrome engine never cuts off or pauses mid-speech
+    const sentences = cleanText.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [cleanText];
+    let currentIndex = 0;
 
     const voices = window.speechSynthesis.getVoices();
     const highQualityVoice = voices.find(
-      (v) => v.lang.startsWith('en') && (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Samantha') || v.name.includes('Jenny') || v.name.includes('Zira'))
+      (v) => v.lang.startsWith('en') && (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Samantha') || v.name.includes('Jenny') || v.name.includes('Zira') || v.name.includes('Aria'))
     ) || voices.find((v) => v.lang.startsWith('en'));
 
-    if (highQualityVoice) utterance.voice = highQualityVoice;
+    // Heartbeat to keep Chrome speech synthesis running smoothly for long answers
+    keepAliveIntervalRef.current = setInterval(() => {
+      if (window.speechSynthesis.speaking) {
+        window.speechSynthesis.pause();
+        window.speechSynthesis.resume();
+      } else {
+        clearInterval(keepAliveIntervalRef.current);
+      }
+    }, 3500);
 
-    utterance.onend = () => {
-      onDone();
-    };
-    utterance.onerror = () => {
-      onDone();
+    const speakNextSentence = () => {
+      if (currentIndex >= sentences.length) {
+        if (keepAliveIntervalRef.current) clearInterval(keepAliveIntervalRef.current);
+        onDone();
+        return;
+      }
+
+      const segment = sentences[currentIndex].trim();
+      currentIndex++;
+
+      if (!segment) {
+        speakNextSentence();
+        return;
+      }
+
+      const utterance = new SpeechSynthesisUtterance(segment);
+      utterance.rate = 1.0;
+      utterance.pitch = 1.0;
+      if (highQualityVoice) utterance.voice = highQualityVoice;
+
+      utterance.onend = () => {
+        speakNextSentence();
+      };
+      utterance.onerror = () => {
+        speakNextSentence();
+      };
+
+      window.speechSynthesis.speak(utterance);
     };
 
-    window.speechSynthesis.speak(utterance);
+    speakNextSentence();
   };
 
   const handleInterrupt = () => {
@@ -634,6 +671,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
     cancelActiveAudio();
     stopMicrophoneStream();
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    if (keepAliveIntervalRef.current) clearInterval(keepAliveIntervalRef.current);
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch (_) {}
     }
