@@ -210,11 +210,9 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
     return () => {
       stopMicrophoneStream();
       cancelActiveAudio();
+      stopSpeechRecognition();
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
       if (keepAliveIntervalRef.current) clearInterval(keepAliveIntervalRef.current);
-      if (recognitionRef.current) {
-        try { recognitionRef.current.stop(); } catch (_) {}
-      }
     };
   }, []);
 
@@ -247,6 +245,18 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
     if (audioContextRef.current) {
       audioContextRef.current.close().catch(() => {});
       audioContextRef.current = null;
+    }
+  };
+
+  const stopSpeechRecognition = () => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.onend = null;
+        recognitionRef.current.onerror = null;
+        recognitionRef.current.onresult = null;
+        recognitionRef.current.stop();
+      } catch (_) {}
+      recognitionRef.current = null;
     }
   };
 
@@ -285,8 +295,8 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
         }
 
         const fullSpoken = (spokenBufferRef.current + ' ' + interim).trim();
-        setLiveCandidateSpokenText(fullSpoken);
         if (fullSpoken.length > 0) {
+          setLiveCandidateSpokenText(fullSpoken);
           setVadState('speaking');
           // Cancel silence countdown when candidate starts speaking
           setSilenceCountdown(null);
@@ -300,17 +310,36 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
       };
 
       rec.onend = () => {
-        // Auto restart if still connected and in listening mode
-        if (isConnected && agentStatusRef.current === 'listening') {
-          try { rec.start(); } catch (_) {}
+        // Auto restart if still in listening mode so continuous candidate answers are never dropped
+        if (agentStatusRef.current === 'listening') {
+          try {
+            rec.start();
+          } catch (_) {}
         }
       };
 
       rec.start();
       recognitionRef.current = rec;
     } catch (err) {
-      console.warn('Failed to initialize SpeechRecognition:', err);
+      console.warn('Failed to start SpeechRecognition:', err);
     }
+  };
+
+  // Explicitly open microphone and start listening for candidate answer
+  const startListeningForCandidate = () => {
+    setAgentStatus('listening');
+    setVadState('idle');
+    spokenBufferRef.current = '';
+    setLiveCandidateSpokenText('');
+    setSilenceCountdown(5);
+
+    stopSpeechRecognition();
+    startSpeechRecognition();
+  };
+
+  const stopListeningForCandidate = () => {
+    setSilenceCountdown(null);
+    stopSpeechRecognition();
   };
 
   // Request real microphone permissions and initiate Web Audio energy analyser
@@ -400,17 +429,14 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
   // Speak AI interviewer question aloud with sentence chunking & SpeechSynthesis keep-alive
   const speakQuestionAloud = (text: string, audioBase64?: string) => {
     cancelActiveAudio();
+    stopListeningForCandidate();
     setAgentStatus('speaking');
     setVadState('idle');
     setSilenceCountdown(null);
 
     const onSpeechFinished = () => {
-      setAgentStatus('listening');
-      setVadState('idle');
-      spokenBufferRef.current = '';
-      setLiveCandidateSpokenText('');
-      // Start 5-second silence countdown for candidate to answer
-      setSilenceCountdown(5);
+      // Seamlessly transition to listening mode and trigger fresh speech recognition
+      startListeningForCandidate();
     };
 
     // If audioBase64 audio bytes are valid
@@ -505,8 +531,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
 
   const handleInterrupt = () => {
     cancelActiveAudio();
-    setAgentStatus('listening');
-    setSilenceCountdown(null);
+    startListeningForCandidate();
   };
 
   const refreshScorecardAndEvidence = async () => {
@@ -534,9 +559,9 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
     if (isProcessing || !spokenText.trim()) return;
 
     setIsProcessing(true);
+    stopListeningForCandidate();
     setAgentStatus('thinking');
     setVadState('endpoint');
-    setSilenceCountdown(null);
 
     const isSilentTurn = spokenText.includes('[Candidate remained silent');
 
@@ -588,11 +613,18 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
     } catch (err: any) {
       console.error('Turn error:', err);
       setErrorMsg(err.message || 'Error processing speech turn');
-      setAgentStatus('listening');
-      setVadState('idle');
-      setSilenceCountdown(5);
+      startListeningForCandidate();
     } finally {
       setIsProcessing(false);
+    }
+  };
+
+  const handleManualSubmitEarly = () => {
+    const textToSubmit = spokenBufferRef.current.trim() || liveCandidateSpokenText.trim();
+    if (textToSubmit.length > 0) {
+      spokenBufferRef.current = '';
+      setLiveCandidateSpokenText('');
+      submitSpokenTurn(textToSubmit);
     }
   };
 
@@ -657,8 +689,6 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
         setMessages([fallbackGreeting]);
         speakQuestionAloud(fallbackText);
       }
-
-      startSpeechRecognition();
     } catch (err: any) {
       console.error('Connection error:', err);
       setErrorMsg(err.message || 'Failed to connect to voice room');
@@ -670,11 +700,9 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
   const handleDisconnect = () => {
     cancelActiveAudio();
     stopMicrophoneStream();
+    stopListeningForCandidate();
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     if (keepAliveIntervalRef.current) clearInterval(keepAliveIntervalRef.current);
-    if (recognitionRef.current) {
-      try { recognitionRef.current.stop(); } catch (_) {}
-    }
     setIsConnected(false);
     setAgentStatus('idle');
     setVadState('idle');
@@ -984,7 +1012,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
             </div>
 
             {/* Voice-Only Bottom Action Controls */}
-            <div className="voice-only-controls-bar" style={{ justifyContent: 'center' }}>
+            <div className="voice-only-controls-bar" style={{ justifyContent: 'center', gap: '14px' }}>
               <button
                 type="button"
                 className={`btn btn-mic ${isMuted ? 'muted' : 'active'}`}
@@ -992,6 +1020,17 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
               >
                 {isMuted ? '🔇 Microphone Muted (Click to Unmute)' : '🎙️ Microphone Active'}
               </button>
+
+              {agentStatus === 'listening' && (liveCandidateSpokenText.trim().length > 0 || vadState === 'speaking') && (
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={handleManualSubmitEarly}
+                  style={{ borderRadius: '20px', padding: '8px 18px', fontWeight: 600 }}
+                >
+                  ✓ Finish Answer Now
+                </button>
+              )}
             </div>
           </div>
         </div>
