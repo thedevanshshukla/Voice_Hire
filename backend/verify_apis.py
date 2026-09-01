@@ -100,7 +100,7 @@ def verify_mongodb():
     if not MONGODB_URI or MONGODB_URI.startswith("your-"):
         return "[SKIPPED] (Not configured)"
     try:
-        client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=4000)
+        client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=4000, tlsAllowInvalidCertificates=True)
         # Send a ping to verify connection
         client.admin.command('ping')
         dbs = client.list_database_names()

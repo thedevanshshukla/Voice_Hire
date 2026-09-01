@@ -22,7 +22,7 @@ class MongoDBClientManager:
             try:
                 uri = settings.MONGODB_URI
                 if uri and not uri.startswith("your-"):
-                    self._client = AsyncIOMotorClient(uri, serverSelectionTimeoutMS=3000)
+                    self._client = AsyncIOMotorClient(uri, serverSelectionTimeoutMS=3000, tlsAllowInvalidCertificates=True)
                     self._db = self._client[settings.MONGODB_DB_NAME]
                     self._is_connected = True
                     logger.info("Connected to MongoDB cluster", extra={"db": settings.MONGODB_DB_NAME})

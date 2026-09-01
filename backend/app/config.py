@@ -22,9 +22,9 @@ class Settings(BaseSettings):
     LIVEKIT_API_SECRET: str = Field(default="devsecret_minimum_32_bytes_key_voicehire", description="LiveKit API Secret")
     
     # Provider Settings (STT / LLM / TTS)
-    STT_PROVIDER: str = Field(default="deepgram", description="Default STT provider: deepgram, mock")
-    LLM_PROVIDER: str = Field(default="gemini", description="Default LLM provider: gemini, openai, mock")
-    TTS_PROVIDER: str = Field(default="elevenlabs", description="Default TTS provider: elevenlabs, deepgram, mock")
+    STT_PROVIDER: str = Field(default="mock", description="Default STT provider: deepgram, mock")
+    LLM_PROVIDER: str = Field(default="mock", description="Default LLM provider: gemini, openai, mock")
+    TTS_PROVIDER: str = Field(default="mock", description="Default TTS provider: elevenlabs, deepgram, mock")
     
     # VAD & Turn Taking Settings
     VAD_PROVIDER: str = Field(default="energy", description="Default VAD provider: energy, mock")
@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     
     # Config configuration
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=[".env", "../.env"],
         env_file_encoding="utf-8",
         extra="ignore"
     )

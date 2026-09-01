@@ -126,8 +126,9 @@ class InterviewConfig(BaseModel):
     role: InterviewRole = InterviewRole.BACKEND
     experience_level: ExperienceLevel = ExperienceLevel.MID
     job_description: Optional[str] = Field(None, description="Optional raw text of the target job description")
+    resume_text: Optional[str] = Field(None, description="Candidate resume text, past projects, and work history")
     topics: List[str] = Field(
-        default_factory=lambda: ["DBMS & SQL", "Operating Systems & Concurrency", "System Design & Architecture"],
+        default_factory=lambda: ["System Architecture & Design", "Databases & Storage", "APIs & Concurrency", "Past Project Deep Dive"],
         description="Selected technical topics to evaluate"
     )
     duration_minutes: int = Field(default=30, ge=10, le=60, description="Target interview duration in minutes")

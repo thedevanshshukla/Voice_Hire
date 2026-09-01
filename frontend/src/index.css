@@ -2642,4 +2642,41 @@ body {
   font-size: 24px;
 }
 
+/* ==========================================
+   Resume Upload Dropzone
+   ========================================== */
+.resume-upload-dropzone {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 2px dashed rgba(124, 58, 237, 0.35);
+  border-radius: var(--radius-md);
+  padding: 18px 20px;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+}
+.resume-upload-dropzone:hover {
+  background: rgba(124, 58, 237, 0.06);
+  border-color: var(--accent-purple);
+}
+.resume-upload-dropzone.has-file {
+  background: rgba(16, 185, 129, 0.06);
+  border-color: rgba(16, 185, 129, 0.4);
+}
+.upload-icon {
+  font-size: 28px;
+}
+.upload-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.upload-sub {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+
 
