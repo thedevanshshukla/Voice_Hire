@@ -39,9 +39,20 @@ def test_evaluate_turn_confused_answer():
         stage=InterviewStage.CORE_CONCEPTS
     )
 
-    assert evaluation.overall_score <= 2.0
-    assert evaluation.correctness <= 2.0
+    assert evaluation.overall_score <= 1.0
+    assert evaluation.correctness <= 1.0
     assert "unable to answer" in evaluation.feedback.lower()
+
+def test_evaluate_turn_gibberish_or_silence():
+    gibberish = "they will use the reference user all and all table so"
+    evaluation = AnswerEvaluator.evaluate_turn(
+        candidate_reply=gibberish,
+        topic="System Design",
+        stage=InterviewStage.CORE_CONCEPTS
+    )
+    assert evaluation.overall_score <= 1.0
+    assert evaluation.depth_and_mechanics <= 1.0
+    assert len(evaluation.strengths) == 0
 
 def test_session_scorecard_aggregation():
     eval1 = TurnEvaluation(

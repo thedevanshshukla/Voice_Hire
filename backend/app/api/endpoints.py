@@ -547,15 +547,15 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
         # PII Sanitization
         candidate_text = PIISanitizer.sanitize(req.text or "")
         
-        # Multilingual code-switching detection
-        if candidate_text:
-            detected_lang, _ = LanguageDetector.detect_language(candidate_text)
-            active_lang = detected_lang
+        # Language consistency: Strictly locked to session configuration to prevent mid-interview language flip
+        active_lang = InterviewLanguage.ENGLISH
 
         if req.session_id:
             assigned_variants = ABExperimentManager.assign_variants(req.session_id)
             session = await InterviewSessionRepository.get_session(req.session_id)
             if session:
+                active_lang = session.config.language or InterviewLanguage.ENGLISH
+                active_languages[session.session_id] = active_lang
                 if req.session_id not in active_state_machines:
                     active_state_machines[req.session_id] = InterviewStateMachine(
                         config=session.config,
@@ -569,11 +569,6 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
                 sm = active_state_machines[req.session_id]
                 ae = active_adaptive_engines[req.session_id]
                 me = active_memory_engines[req.session_id]
-                
-                # If explicit language set in config, respect it unless code-switching
-                if session.config.language != InterviewLanguage.ENGLISH and not candidate_text:
-                    active_lang = session.config.language
-                active_languages[session.session_id] = active_lang
                 
                 trans_res = sm.step_turn(last_candidate_reply=candidate_text)
                 current_stage = trans_res.current_stage

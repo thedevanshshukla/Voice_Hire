@@ -41,15 +41,15 @@ class InterviewStage(str, Enum):
     WRAP_UP = "wrap_up"
 
 class TurnEvaluation(BaseModel):
-    overall_score: float = Field(..., ge=1.0, le=5.0, description="Overall weighted turn score (1-5)")
-    correctness: float = Field(default=3.0, ge=1.0, le=5.0, description="Technical accuracy and correctness")
-    depth_and_mechanics: float = Field(default=3.0, ge=1.0, le=5.0, description="Depth of underlying mechanisms")
-    communication_clarity: float = Field(default=3.0, ge=1.0, le=5.0, description="Clarity and structured thought")
-    tradeoff_awareness: float = Field(default=3.0, ge=1.0, le=5.0, description="Explicit trade-off reasoning")
-    practical_vs_theory: float = Field(default=3.0, ge=1.0, le=5.0, description="Real-world production experience vs theory")
+    overall_score: float = Field(..., ge=0.0, le=5.0, description="Overall weighted turn score (0-5)")
+    correctness: float = Field(default=3.0, ge=0.0, le=5.0, description="Technical accuracy and correctness")
+    depth_and_mechanics: float = Field(default=3.0, ge=0.0, le=5.0, description="Depth of underlying mechanisms")
+    communication_clarity: float = Field(default=3.0, ge=0.0, le=5.0, description="Clarity and structured thought")
+    tradeoff_awareness: float = Field(default=3.0, ge=0.0, le=5.0, description="Explicit trade-off reasoning")
+    practical_vs_theory: float = Field(default=3.0, ge=0.0, le=5.0, description="Real-world production experience vs theory")
     strengths: List[str] = Field(default_factory=list)
     gaps: List[str] = Field(default_factory=list)
-    feedback: str = ""
+    feedback: Optional[str] = None
 
 class SessionScorecard(BaseModel):
     overall_score: float = Field(default=0.0, description="Average composite score across all evaluated turns")

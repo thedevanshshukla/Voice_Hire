@@ -43,45 +43,63 @@ class AnswerEvaluator:
         words = text.split()
         word_count = len(words)
 
-        # Base scoring
-        correctness = 3.0
-        depth = 3.0
-        clarity = 3.5
-        tradeoffs = 2.5
-        practical = 2.5
+        matched_mechanisms = [m for m in MECHANISM_KEYWORDS if m in lower]
+        matched_tradeoffs = [t for t in TRADEOFF_KEYWORDS if t in lower]
+        matched_practical = [p for p in PRACTICAL_KEYWORDS if p in lower]
+
+        # 1. Tier 0: Non-Answers, Silence, Fragments, Broken Speech, Refusals (Score: 0 - 1 / 10 => 0.0 - 0.5 / 5.0)
+        NON_TECHNICAL_FRAGMENTS = [
+            "they will use the reference", "user all and all table", "so you are that the thing",
+            "no response", "remained silent", "next question", "i don't know", "not sure",
+            "skip", "pass", "hello", "hi", "can you hear", "test", "information", "question"
+        ]
+        is_fragment = any(f in lower for f in NON_TECHNICAL_FRAGMENTS)
+
+        if word_count < 4 or (is_fragment and len(matched_mechanisms) == 0 and len(matched_practical) == 0 and len(matched_tradeoffs) == 0):
+            return TurnEvaluation(
+                overall_score=0.5,
+                correctness=0.5,
+                depth_and_mechanics=0.5,
+                communication_clarity=1.0,
+                tradeoff_awareness=0.0,
+                practical_vs_theory=0.0,
+                strengths=[],
+                gaps=["Candidate did not provide a relevant technical explanation or substantive response."],
+                feedback="Candidate was unable to answer or remained silent/non-responsive."
+            )
+
+        # 2. Tier 1: Superficial / Keyword-only without mechanism explanation (Score: ~5.0 / 10 => ~2.5 / 5.0)
+        if word_count < 14 and len(matched_mechanisms) <= 1 and len(matched_tradeoffs) == 0 and len(matched_practical) == 0:
+            return TurnEvaluation(
+                overall_score=2.5,
+                correctness=2.5,
+                depth_and_mechanics=2.0,
+                communication_clarity=3.0,
+                tradeoff_awareness=1.5,
+                practical_vs_theory=1.5,
+                strengths=["Mentioned basic relevant technical terms."],
+                gaps=["Answer was superficial; omitted underlying architectural mechanisms and trade-offs."],
+                feedback="Answer touched upon relevant keywords but lacked technical depth and explanation of mechanisms."
+            )
+
+        # 3. Tier 2 & 3: Evaluate in-depth scoring
         strengths: List[str] = []
         gaps: List[str] = []
 
-        # 1. Evaluate Confusion / Refusal
-        if word_count < 4 or "i don't know" in lower or "not sure" in lower:
-            return TurnEvaluation(
-                overall_score=1.5,
-                correctness=1.5,
-                depth=1.0,
-                communication_clarity=3.0,
-                tradeoff_awareness=1.0,
-                practical_vs_theory=1.0,
-                strengths=[],
-                gaps=["Did not provide technical explanation for the question."],
-                feedback="Candidate was unable to answer or lacked familiarity with this domain."
-            )
-
-        # 2. Evaluate Depth & Mechanics
-        matched_mechanisms = [m for m in MECHANISM_KEYWORDS if m in lower]
+        # Depth
         if len(matched_mechanisms) >= 2:
-            depth = 4.5
+            depth = 4.8
             strengths.append(f"Clear grasp of underlying mechanisms ({', '.join(matched_mechanisms[:2])}).")
         elif len(matched_mechanisms) == 1:
             depth = 3.8
             strengths.append(f"Mentioned core mechanism: {matched_mechanisms[0]}.")
-        elif word_count < 15:
-            depth = 2.0
-            gaps.append("Answer was superficial; omitted underlying architectural mechanisms.")
+        elif word_count < 25:
+            depth = 2.2
+            gaps.append("Omitted underlying architectural mechanisms and internal implementation details.")
         else:
-            depth = 3.0
+            depth = 3.2
 
-        # 3. Evaluate Trade-off Awareness
-        matched_tradeoffs = [t for t in TRADEOFF_KEYWORDS if t in lower]
+        # Tradeoffs
         if len(matched_tradeoffs) >= 2:
             tradeoffs = 4.8
             strengths.append("Exceptional trade-off reasoning and architectural evaluation.")
@@ -92,18 +110,17 @@ class AnswerEvaluator:
             tradeoffs = 2.5
             gaps.append("Did not explicitly weigh downsides or trade-offs of the chosen approach.")
 
-        # 4. Evaluate Practical Experience vs Theory
-        matched_practical = [p for p in PRACTICAL_KEYWORDS if p in lower]
+        # Practical Production Reality
         if len(matched_practical) >= 1:
-            practical = 4.5
+            practical = 4.8
             strengths.append(f"Cited real-world production experience ({', '.join(matched_practical[:2])}).")
         elif word_count >= 30 and depth >= 3.5:
-            practical = 3.5
+            practical = 3.8
         else:
             practical = 2.5
 
-        # 5. Evaluate Clarity
-        if 15 <= word_count <= 80:
+        # Communication Clarity
+        if 15 <= word_count <= 90:
             clarity = 4.5
         elif word_count > 120:
             clarity = 3.0
@@ -111,26 +128,27 @@ class AnswerEvaluator:
         else:
             clarity = 3.5
 
-        # 6. Evaluate Correctness
-        if "wrong" in lower or "always safe" in lower or (depth <= 2.0 and word_count < 10):
-            correctness = 2.5
+        # Technical Correctness
+        if "wrong" in lower or "always safe" in lower:
+            correctness = 2.0
+            gaps.append("Contained technical inaccuracies or incorrect assumptions.")
         elif depth >= 4.0 and tradeoffs >= 4.0:
             correctness = 4.8
         elif depth >= 3.5:
             correctness = 4.0
         else:
-            correctness = 3.2
+            correctness = 3.0
 
-        # Compute weighted overall score
-        # Correctness: 25%, Depth: 25%, Clarity: 15%, Tradeoffs: 20%, Practical: 15%
+        # Compute calibrated overall score
+        # Correctness: 30%, Depth: 30%, Clarity: 10%, Tradeoffs: 15%, Practical: 15%
         overall = (
-            (correctness * 0.25) +
-            (depth * 0.25) +
-            (clarity * 0.15) +
-            (tradeoffs * 0.20) +
+            (correctness * 0.30) +
+            (depth * 0.30) +
+            (clarity * 0.10) +
+            (tradeoffs * 0.15) +
             (practical * 0.15)
         )
-        overall_score = round(min(5.0, max(1.0, overall)), 2)
+        overall_score = round(min(5.0, max(0.5, overall)), 2)
 
         if not strengths:
             strengths.append("Provided basic relevant domain answer.")
@@ -138,25 +156,17 @@ class AnswerEvaluator:
             gaps.append("Could expand further on failure recovery and edge cases.")
 
         feedback = (
-            f"Strong answer on {topic}" if overall_score >= 4.0
-            else f"Adequate explanation of {topic}, but could deepen trade-offs and edge-case mechanics."
+            f"Overall: {overall_score}/5.0. "
+            f"Correctness: {correctness:.1f}, Depth: {depth:.1f}, Trade-offs: {tradeoffs:.1f}, Practical: {practical:.1f}."
         )
-
-        logger.info("Evaluated candidate turn", extra={
-            "overall": overall_score,
-            "correctness": correctness,
-            "depth": depth,
-            "tradeoffs": tradeoffs,
-            "practical": practical
-        })
 
         return TurnEvaluation(
             overall_score=overall_score,
-            correctness=round(correctness, 1),
-            depth_and_mechanics=round(depth, 1),
-            communication_clarity=round(clarity, 1),
-            tradeoff_awareness=round(tradeoffs, 1),
-            practical_vs_theory=round(practical, 1),
+            correctness=round(correctness, 2),
+            depth_and_mechanics=round(depth, 2),
+            communication_clarity=round(clarity, 2),
+            tradeoff_awareness=round(tradeoffs, 2),
+            practical_vs_theory=round(practical, 2),
             strengths=strengths,
             gaps=gaps,
             feedback=feedback
