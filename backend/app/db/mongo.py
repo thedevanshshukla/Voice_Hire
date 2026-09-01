@@ -3,6 +3,7 @@ from typing import Optional, List, Dict, Any
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from app.config import settings
 from app.models.interview import InterviewSession
+from app.models.user import User
 from app.core.logger import get_logger
 
 logger = get_logger("db.mongo")
@@ -14,6 +15,7 @@ class MongoDBClientManager:
         self._db: Optional[AsyncIOMotorDatabase] = None
         self._is_connected: bool = False
         self._in_memory_sessions: Dict[str, Dict[str, Any]] = {}
+        self._in_memory_users: Dict[str, Dict[str, Any]] = {}
 
     def get_database(self) -> Optional[AsyncIOMotorDatabase]:
         if not self._client:
@@ -30,6 +32,55 @@ class MongoDBClientManager:
         return self._db
 
 db_manager = MongoDBClientManager()
+
+class UserRepository:
+    """Repository for user accounts."""
+    
+    @staticmethod
+    async def create_user(user: User) -> User:
+        db = db_manager.get_database()
+        doc = user.model_dump()
+        
+        if db is not None:
+            try:
+                await db.users.insert_one(doc)
+                logger.info(f"User {user.email} saved to MongoDB")
+                return user
+            except Exception as e:
+                logger.warning(f"Failed to persist user to MongoDB: {e}")
+                
+        db_manager._in_memory_users[user.email] = doc
+        return user
+
+    @staticmethod
+    async def get_user_by_email(email: str) -> Optional[User]:
+        db = db_manager.get_database()
+        if db is not None:
+            try:
+                doc = await db.users.find_one({"email": email.lower().strip()}, {"_id": 0})
+                if doc:
+                    return User(**doc)
+            except Exception as e:
+                logger.warning(f"Error querying user by email in MongoDB: {e}")
+                
+        doc = db_manager._in_memory_users.get(email.lower().strip())
+        return User(**doc) if doc else None
+
+    @staticmethod
+    async def get_user_by_id(user_id: str) -> Optional[User]:
+        db = db_manager.get_database()
+        if db is not None:
+            try:
+                doc = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+                if doc:
+                    return User(**doc)
+            except Exception as e:
+                logger.warning(f"Error querying user by id in MongoDB: {e}")
+                
+        for doc in db_manager._in_memory_users.values():
+            if doc.get("user_id") == user_id:
+                return User(**doc)
+        return None
 
 class InterviewSessionRepository:
     """Repository for persisting and retrieving InterviewSession documents."""
@@ -83,12 +134,22 @@ class InterviewSessionRepository:
         return None
 
     @staticmethod
-    async def list_sessions(candidate_id: Optional[str] = None, limit: int = 20) -> List[InterviewSession]:
+    async def list_sessions(
+        candidate_id: Optional[str] = None,
+        user_email: Optional[str] = None,
+        limit: int = 50
+    ) -> List[InterviewSession]:
         db = db_manager.get_database()
         sessions = []
+        
+        query: Dict[str, Any] = {}
+        if candidate_id:
+            query["candidate_id"] = candidate_id
+        if user_email:
+            query["user_email"] = user_email.lower().strip()
+            
         if db is not None:
             try:
-                query = {"candidate_id": candidate_id} if candidate_id else {}
                 cursor = db.interview_sessions.find(query, {"_id": 0}).sort("created_at", -1).limit(limit)
                 async for doc in cursor:
                     sessions.append(InterviewSession(**doc))
@@ -98,6 +159,9 @@ class InterviewSessionRepository:
 
         # In-memory fallback
         for doc in db_manager._in_memory_sessions.values():
-            if not candidate_id or doc.get("candidate_id") == candidate_id:
-                sessions.append(InterviewSession(**doc))
+            if candidate_id and doc.get("candidate_id") != candidate_id:
+                continue
+            if user_email and doc.get("user_email") != user_email.lower().strip():
+                continue
+            sessions.append(InterviewSession(**doc))
         return sorted(sessions, key=lambda s: s.created_at, reverse=True)[:limit]

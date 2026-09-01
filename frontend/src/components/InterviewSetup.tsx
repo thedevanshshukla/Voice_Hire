@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { useAuth } from '../context/AuthContext';
+import { useNavigate } from 'react-router-dom';
 
 export interface InterviewConfig {
   role: string;
@@ -7,12 +9,14 @@ export interface InterviewConfig {
   topics: string[];
   duration_minutes: number;
   language: string;
+  user_email?: string;
 }
 
 export interface InterviewSession {
   session_id: string;
   candidate_id: string;
   candidate_name: string;
+  user_email?: string;
   config: InterviewConfig;
   status: string;
   created_at: string;
@@ -30,7 +34,7 @@ export interface KnowledgeDoc {
 
 interface InterviewSetupProps {
   apiUrl: string;
-  onStartSession: (session: InterviewSession) => void;
+  onStartSession?: (session: InterviewSession) => void;
 }
 
 const ROLES = [
@@ -60,7 +64,10 @@ const AVAILABLE_TOPICS = [
 ];
 
 export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartSession }) => {
-  const [candidateName, setCandidateName] = useState('Alex Chen');
+  const { user } = useAuth();
+  const navigate = useNavigate();
+
+  const [candidateName, setCandidateName] = useState(user?.full_name || 'Alex Chen');
   const [selectedRole, setSelectedRole] = useState('Backend Engineer');
   const [selectedLevel, setSelectedLevel] = useState('SDE-2 (2-5 years)');
   const [selectedTopics, setSelectedTopics] = useState<string[]>([
@@ -86,12 +93,19 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
   
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (user?.full_name) {
+      setCandidateName(user.full_name);
+    }
+  }, [user]);
+
   // Fetch past sessions & knowledge docs
   useEffect(() => {
     const fetchInitialData = async () => {
       try {
+        const queryParam = user?.email ? `?user_email=${encodeURIComponent(user.email)}` : '';
         const [sessRes, kbRes] = await Promise.all([
-          fetch(`${apiUrl}/api/interview/sessions`),
+          fetch(`${apiUrl}/api/interview/sessions${queryParam}`),
           fetch(`${apiUrl}/api/knowledge/documents`)
         ]);
         if (sessRes.ok) {
@@ -107,7 +121,7 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
       }
     };
     fetchInitialData();
-  }, [apiUrl]);
+  }, [apiUrl, user]);
 
   const toggleTopic = (topic: string) => {
     if (selectedTopics.includes(topic)) {
@@ -161,13 +175,15 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           candidate_name: candidateName,
+          user_email: user?.email || undefined,
           config: {
             role: selectedRole,
             experience_level: selectedLevel,
             job_description: jobDescription || undefined,
             topics: selectedTopics,
             duration_minutes: durationMinutes,
-            language: language
+            language: language,
+            user_email: user?.email || undefined
           }
         })
       });
@@ -177,7 +193,10 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
       }
 
       const session: InterviewSession = await res.json();
-      onStartSession(session);
+      if (onStartSession) {
+        onStartSession(session);
+      }
+      navigate(`/interview/${session.session_id}`);
     } catch (err: any) {
       console.error('Failed to create session:', err);
       setErrorMsg(err.message || 'Failed to configure interview session');
@@ -191,6 +210,9 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
       {/* Top Header Bar */}
       <div className="setup-header">
         <div>
+          <button className="btn-back-link" onClick={() => navigate('/dashboard')}>
+            ← Back to Dashboard
+          </button>
           <span className="badge badge-purple">Technical Assessment Configuration</span>
           <h2 className="setup-title">Interview Parameters</h2>
           <p className="setup-subtitle">
@@ -317,7 +339,7 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
                 <div
                   key={sess.session_id}
                   className="history-card"
-                  onClick={() => onStartSession(sess)}
+                  onClick={() => navigate(`/interview/${sess.session_id}`)}
                 >
                   <div className="history-card-header">
                     <span className="history-role">{sess.config.role}</span>

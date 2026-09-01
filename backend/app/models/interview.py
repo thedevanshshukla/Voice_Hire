@@ -132,6 +132,7 @@ class InterviewConfig(BaseModel):
     )
     duration_minutes: int = Field(default=30, ge=10, le=60, description="Target interview duration in minutes")
     language: InterviewLanguage = InterviewLanguage.ENGLISH
+    user_email: Optional[str] = Field(None, description="User email of owner/candidate")
 
 class TranscriptEntry(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -155,6 +156,7 @@ class InterviewSession(BaseModel):
     session_id: str = Field(default_factory=lambda: f"session-{uuid.uuid4().hex[:8]}")
     candidate_id: str = Field(default_factory=lambda: f"cand-{uuid.uuid4().hex[:6]}")
     candidate_name: str = "Candidate"
+    user_email: Optional[str] = Field(None, description="Owner user account email")
     config: InterviewConfig = Field(default_factory=InterviewConfig)
     status: SessionStatus = SessionStatus.CONFIGURED
     current_stage: InterviewStage = InterviewStage.GREETING

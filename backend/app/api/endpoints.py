@@ -30,7 +30,9 @@ from app.models.tools import (
 from app.models.experiments import ExperimentConfig, ExperimentResult
 from app.models.benchmark import BenchmarkRunSummary
 from app.models.scale import LoadTestConfig, LoadTestResult
-from app.db.mongo import InterviewSessionRepository
+from app.models.user import User, SignupRequest, LoginRequest, AuthResponse, UserProfile
+from app.auth.security import hash_password, verify_password, create_access_token, verify_access_token
+from app.db.mongo import InterviewSessionRepository, UserRepository
 from app.interview.prompt_builder import InterviewPromptBuilder
 from app.interview.state_machine import InterviewStateMachine, STAGE_SEQUENCE, STAGE_DISPLAY_NAMES
 from app.interview.adaptive_engine import AdaptiveQuestionEngine, AdaptiveAction
@@ -126,6 +128,68 @@ class SearchKnowledgeRequest(BaseModel):
     query: str
     role_target: Optional[str] = None
     top_k: int = 2
+
+# ==========================================
+# 0. User Authentication & Profile APIs
+# ==========================================
+
+@router.post("/api/auth/signup", response_model=AuthResponse)
+async def signup_user(req: SignupRequest) -> AuthResponse:
+    existing = await UserRepository.get_user_by_email(req.email)
+    if existing:
+        raise HTTPException(status_code=400, detail="An account with this email already exists")
+    
+    import uuid
+    new_user = User(
+        user_id=f"user-{uuid.uuid4().hex[:8]}",
+        email=req.email.lower().strip(),
+        full_name=req.full_name.strip(),
+        password_hash=hash_password(req.password)
+    )
+    saved = await UserRepository.create_user(new_user)
+    token = create_access_token(user_id=saved.user_id, email=saved.email)
+    return AuthResponse(
+        token=token,
+        user_id=saved.user_id,
+        email=saved.email,
+        full_name=saved.full_name
+    )
+
+@router.post("/api/auth/login", response_model=AuthResponse)
+async def login_user(req: LoginRequest) -> AuthResponse:
+    user = await UserRepository.get_user_by_email(req.email)
+    if not user or not verify_password(req.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    token = create_access_token(user_id=user.user_id, email=user.email)
+    return AuthResponse(
+        token=token,
+        user_id=user.user_id,
+        email=user.email,
+        full_name=user.full_name
+    )
+
+@router.get("/api/auth/me", response_model=UserProfile)
+async def get_current_user_profile(request: Request) -> UserProfile:
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid authentication token")
+    
+    token = auth_header.replace("Bearer ", "").strip()
+    payload = verify_access_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Session expired or invalid")
+    
+    user = await UserRepository.get_user_by_email(payload["email"])
+    if not user:
+        raise HTTPException(status_code=404, detail="User account not found")
+        
+    return UserProfile(
+        user_id=user.user_id,
+        email=user.email,
+        full_name=user.full_name,
+        created_at=user.created_at
+    )
 
 # ==========================================
 # 1. Scale & Concurrent Load APIs (v0.19.0)
@@ -262,9 +326,15 @@ async def get_interview_stages(duration_minutes: int = 30) -> List[Dict[str, Any
     return [b.model_dump() for b in budgets]
 
 @router.post("/api/interview/session", response_model=InterviewSession)
-async def create_interview_session(config: InterviewConfig, candidate_name: str = "Candidate") -> InterviewSession:
+async def create_interview_session(
+    config: InterviewConfig,
+    candidate_name: str = "Candidate",
+    user_email: Optional[str] = None
+) -> InterviewSession:
+    email = user_email or config.user_email
     session = InterviewSession(
         candidate_name=candidate_name,
+        user_email=email,
         config=config,
         status=SessionStatus.CONFIGURED,
         current_stage=InterviewStage.GREETING
@@ -314,8 +384,16 @@ async def generate_evidence_report(session_id: str) -> EvidenceEvaluationReport:
     return report
 
 @router.get("/api/interview/sessions", response_model=List[InterviewSession])
-async def list_interview_sessions(candidate_id: Optional[str] = None, limit: int = 20) -> List[InterviewSession]:
-    return await InterviewSessionRepository.list_sessions(candidate_id=candidate_id, limit=limit)
+async def list_interview_sessions(
+    candidate_id: Optional[str] = None,
+    user_email: Optional[str] = None,
+    limit: int = 50
+) -> List[InterviewSession]:
+    return await InterviewSessionRepository.list_sessions(
+        candidate_id=candidate_id,
+        user_email=user_email,
+        limit=limit
+    )
 
 # ==========================================
 # 10. System Diagnostics & Health (v1.0.0 Production Readiness)
