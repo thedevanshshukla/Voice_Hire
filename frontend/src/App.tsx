@@ -76,7 +76,7 @@ function App() {
               title={error ? 'Disconnected from backend API' : 'Connected to backend API'}
             />
             <span>
-              {loading ? 'Checking status...' : error ? 'API Offline' : `API Online v${backendHealth?.version}`}
+              {loading ? 'Checking status...' : error ? 'API Offline' : `API Online`}
             </span>
           </div>
 
@@ -85,7 +85,7 @@ function App() {
               className="btn btn-secondary btn-sm"
               onClick={() => setCurrentView(currentView === 'interview' ? 'setup' : 'home')}
             >
-              {currentView === 'interview' ? '⚙️ Interview Setup' : '🏠 Home'}
+              {currentView === 'interview' ? 'Interview Configuration' : 'Overview'}
             </button>
           )}
         </div>
@@ -111,23 +111,23 @@ function App() {
         {currentView === 'home' && (
           <>
             <section className="hero-section">
-              <div className="badge">Phase 5 Active • Interview Foundation (v0.6.0)</div>
+              <div className="badge">Autonomous Technical Assessment Platform</div>
               <h1 className="hero-title">
                 Realtime Voice AI<br />Technical Interviewer
               </h1>
               <p className="hero-subtitle">
                 Conduct structured, evidence-based technical interviews for software engineering roles. 
-                Configure role seniority, probe deep technical domains, paste custom job descriptions, and persist complete interview transcripts in MongoDB.
+                Evaluates candidate architecture, algorithms, and systems engineering with sub-150ms conversational turn-taking and verbatim quotation scoring.
               </p>
 
               <div className="btn-container">
                 <button className="btn btn-primary" onClick={() => setCurrentView('setup')}>
-                  <span>Configure & Launch Interview</span>
-                  <span>⚙️</span>
+                  <span>Configure & Launch Session</span>
+                  <span>→</span>
                 </button>
                 <button className="btn btn-secondary" onClick={() => setCurrentView('interview')}>
-                  <span>Quick Start (Default Room)</span>
-                  <span>🎙️</span>
+                  <span>Quick Start Session</span>
+                  <span>→</span>
                 </button>
               </div>
 
@@ -138,34 +138,34 @@ function App() {
                   <span className="provider-tag">LLM: <strong>{backendHealth.providers.llm}</strong></span>
                   <span className="provider-tag">TTS: <strong>{backendHealth.providers.tts}</strong></span>
                   <span className="provider-tag">VAD: <strong>{backendHealth.providers.vad || 'energy'}</strong></span>
-                  <span className="provider-tag" style={{ color: 'var(--accent-purple)' }}>🗄️ MongoDB: <strong>Synced</strong></span>
+                  <span className="provider-tag" style={{ color: 'var(--accent-purple)' }}>Database: <strong>Connected</strong></span>
                 </div>
               )}
             </section>
 
-            {/* Feature Highlights / Roadmap */}
+            {/* Feature Highlights */}
             <section className="features-grid">
               <div className="feature-card">
-                <div className="feature-icon">🎯</div>
-                <h3 className="feature-title">Interview Foundation (v0.6.0)</h3>
+                <div className="feature-indicator">01</div>
+                <h3 className="feature-title">Adaptive Question Engine</h3>
                 <p className="feature-desc">
-                  Role presets (Backend, Frontend, DevOps, Systems Architect), seniority levels (SDE-1 to Staff), custom JD parsing, and MongoDB session persistence.
+                  Dynamically assesses candidate depth across fundamentals, distributed systems, and system design with targeted mechanical probing.
                 </p>
               </div>
 
               <div className="feature-card">
-                <div className="feature-icon">🛑</div>
-                <h3 className="feature-title">Barge-in Support</h3>
+                <div className="feature-indicator">02</div>
+                <h3 className="feature-title">Sub-150ms Conversational Turn-Taking</h3>
                 <p className="feature-desc">
-                  Candidate can interrupt the AI interviewer naturally at any point with sub-200ms audio cancellation and generation abortion.
+                  Natural full-duplex speech interaction with intelligent pause tolerance and instantaneous barge-in cutoff.
                 </p>
               </div>
 
               <div className="feature-card">
-                <div className="feature-icon">⚡</div>
-                <h3 className="feature-title">Natural Turn Taking</h3>
+                <div className="feature-indicator">03</div>
+                <h3 className="feature-title">Evidence-Based Scorecards</h3>
                 <p className="feature-desc">
-                  Adaptive VAD state machine protects candidate thinking pauses without premature interruptions.
+                  Multi-dimensional rubric scoring supported by verbatim transcript quotes, contradiction detection, and technical red flag audits.
                 </p>
               </div>
             </section>
@@ -175,7 +175,10 @@ function App() {
 
       {/* Footer */}
       <footer className="footer">
-        <p>&copy; {new Date().getFullYear()} VoiceHire. Built with FastAPI, Next/React, & LiveKit.</p>
+        <div>VoiceHire Enterprise Assessment Platform</div>
+        <div style={{ color: 'var(--text-muted)' }}>
+          Production Ready • WebRTC Audio Engine
+        </div>
       </footer>
     </div>
   );

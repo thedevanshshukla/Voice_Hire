@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     # LiveKit Settings
     LIVEKIT_URL: str = Field(default="ws://localhost:7880", description="LiveKit server WebSocket URL")
     LIVEKIT_API_KEY: str = Field(default="devkey", description="LiveKit API Key")
-    LIVEKIT_API_SECRET: str = Field(default="secret", description="LiveKit API Secret")
+    LIVEKIT_API_SECRET: str = Field(default="devsecret_minimum_32_bytes_key_voicehire", description="LiveKit API Secret")
     
     # Provider Settings (STT / LLM / TTS)
     STT_PROVIDER: str = Field(default="mock", description="Default STT provider: mock, deepgram")

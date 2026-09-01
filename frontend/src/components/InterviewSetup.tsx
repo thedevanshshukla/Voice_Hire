@@ -34,11 +34,11 @@ interface InterviewSetupProps {
 }
 
 const ROLES = [
-  { id: 'Backend Engineer', title: 'Backend Engineer', icon: '⚙️', desc: 'Databases, APIs, concurrency, and scalable services.' },
-  { id: 'Frontend Engineer', title: 'Frontend Engineer', icon: '🎨', desc: 'React, performance, state management, and modern Web APIs.' },
-  { id: 'Fullstack Engineer', title: 'Fullstack Engineer', icon: '🚀', desc: 'End-to-end web architectures, backend logic, and user interfaces.' },
-  { id: 'DevOps / SRE Engineer', title: 'DevOps / SRE', icon: '☁️', desc: 'CI/CD, Kubernetes, cloud infrastructure, and site reliability.' },
-  { id: 'Distributed Systems Architect', title: 'Systems Architect', icon: '🏛️', desc: 'High-availability, consensus, sharding, and fault tolerance.' }
+  { id: 'Backend Engineer', title: 'Backend Engineer', desc: 'Databases, APIs, concurrency, and distributed services.' },
+  { id: 'Frontend Engineer', title: 'Frontend Engineer', desc: 'React, performance, state architecture, and browser APIs.' },
+  { id: 'Fullstack Engineer', title: 'Fullstack Engineer', desc: 'End-to-end web architectures, backend logic, and interfaces.' },
+  { id: 'DevOps / SRE Engineer', title: 'DevOps / SRE', desc: 'CI/CD, Kubernetes, cloud infrastructure, and site reliability.' },
+  { id: 'Distributed Systems Architect', title: 'Systems Architect', desc: 'High-availability, consensus, sharding, and resilience.' }
 ];
 
 const EXPERIENCE_LEVELS = [
@@ -191,10 +191,10 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
       {/* Top Header Bar */}
       <div className="setup-header">
         <div>
-          <span className="badge badge-purple">Knowledge RAG Guided Interview • v0.11.0</span>
-          <h2 className="setup-title">Configure Technical Interview</h2>
+          <span className="badge badge-purple">Technical Assessment Configuration</span>
+          <h2 className="setup-title">Interview Parameters</h2>
           <p className="setup-subtitle">
-            Tailor the AI interviewer to specific engineering roles, seniority expectations, company standards, and target job descriptions.
+            Configure candidate details, target technical scope, seniority rubrics, and optional company engineering standards.
           </p>
         </div>
 
@@ -203,7 +203,7 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
             className="btn btn-secondary history-toggle-btn"
             onClick={() => setShowKnowledgeDrawer(!showKnowledgeDrawer)}
           >
-            <span>📚 Knowledge Base</span>
+            <span>Knowledge Base</span>
             <span className="history-count">{knowledgeDocs.length}</span>
           </button>
 
@@ -211,7 +211,7 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
             className="btn btn-secondary history-toggle-btn"
             onClick={() => setShowHistory(!showHistory)}
           >
-            <span>📜 Past Sessions</span>
+            <span>Past Sessions</span>
             {pastSessions.length > 0 && (
               <span className="history-count">{pastSessions.length}</span>
             )}
@@ -221,7 +221,7 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
 
       {errorMsg && (
         <div className="error-banner" style={{ marginBottom: '20px' }}>
-          ⚠️ {errorMsg}
+          {errorMsg}
         </div>
       )}
 
@@ -230,9 +230,9 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
         <div className="past-sessions-drawer">
           <div className="drawer-header">
             <div>
-              <h4>📚 Company Engineering Standards & Rubrics</h4>
+              <h4>Company Engineering Standards & Rubrics</h4>
               <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                Indexed for mid-interview Retrieval-Augmented Generation (RAG)
+                Grounding context indexed for mid-interview verification
               </span>
             </div>
             <button className="btn-close" onClick={() => setShowKnowledgeDrawer(false)}>✕</button>
@@ -243,7 +243,7 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
               <div key={doc.id} className="history-card">
                 <div className="history-card-header">
                   <span className="history-role" style={{ fontSize: '13px' }}>{doc.title}</span>
-                  <span className="history-status" style={{ fontSize: '9px' }}>{doc.category}</span>
+                  <span className="history-status" style={{ fontSize: '9px' }}>{doc.category.replace('_', ' ')}</span>
                 </div>
                 <p style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: 1.4, margin: '6px 0' }}>
                   {doc.content.slice(0, 140)}...
@@ -259,7 +259,7 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
 
           {/* Ingest Form */}
           <form onSubmit={handleIngestDoc} style={{ background: 'rgba(0,0,0,0.3)', padding: '16px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
-            <h5 style={{ fontSize: '13px', fontWeight: 700, marginBottom: '10px' }}>+ Ingest Company Document / Rubric</h5>
+            <h5 style={{ fontSize: '13px', fontWeight: 700, marginBottom: '10px' }}>Add Engineering Standard / Rubric</h5>
             <div className="form-row">
               <input
                 type="text"
@@ -296,7 +296,7 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
               required
             />
             <button type="submit" className="btn btn-secondary btn-sm" style={{ marginTop: '8px' }}>
-              Index Document into RAG
+              Index Standard into Context
             </button>
           </form>
         </div>
@@ -306,11 +306,11 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
       {showHistory && (
         <div className="past-sessions-drawer">
           <div className="drawer-header">
-            <h4>Previous Interview Sessions</h4>
+            <h4>Past Assessment Sessions</h4>
             <button className="btn-close" onClick={() => setShowHistory(false)}>✕</button>
           </div>
           {pastSessions.length === 0 ? (
-            <p className="empty-history">No past interviews found in database.</p>
+            <p className="empty-history">No past assessment sessions recorded.</p>
           ) : (
             <div className="history-grid">
               {pastSessions.map((sess) => (
@@ -324,9 +324,9 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
                     <span className="history-status">{sess.status}</span>
                   </div>
                   <div className="history-meta">
-                    <span>🧑 {sess.candidate_name}</span>
-                    <span>⚡ {sess.turn_count} turns</span>
-                    <span>⏱️ {sess.config.duration_minutes}m</span>
+                    <span>{sess.candidate_name}</span>
+                    <span>{sess.turn_count} turns</span>
+                    <span>{sess.config.duration_minutes} min</span>
                   </div>
                   <div className="history-topics">
                     {sess.config.topics.slice(0, 3).map((t, idx) => (
@@ -347,7 +347,7 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
         {/* Left Column: Role & Seniority */}
         <div className="setup-section">
           <div className="form-group">
-            <label className="section-label">1. Candidate Information</label>
+            <label className="section-label">Candidate Name</label>
             <input
               type="text"
               value={candidateName}
@@ -358,7 +358,7 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
           </div>
 
           <div className="form-group">
-            <label className="section-label">2. Select Technical Role</label>
+            <label className="section-label">Engineering Discipline</label>
             <div className="roles-grid">
               {ROLES.map((role) => (
                 <div
@@ -367,7 +367,6 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
                   onClick={() => setSelectedRole(role.id)}
                 >
                   <div className="role-card-top">
-                    <span className="role-icon">{role.icon}</span>
                     <span className="role-name">{role.title}</span>
                   </div>
                   <p className="role-desc">{role.desc}</p>
@@ -377,7 +376,7 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
           </div>
 
           <div className="form-group">
-            <label className="section-label">3. Target Seniority Level</label>
+            <label className="section-label">Seniority Tier</label>
             <div className="levels-grid">
               {EXPERIENCE_LEVELS.map((level) => (
                 <div
@@ -396,7 +395,7 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
         {/* Right Column: Topics, Duration, JD */}
         <div className="setup-section">
           <div className="form-group">
-            <label className="section-label">4. Session Duration & Language</label>
+            <label className="section-label">Duration & Assessment Language</label>
             <div className="form-row">
               <div className="flex-1">
                 <select
@@ -406,7 +405,7 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
                 >
                   <option value={15}>15 Minutes (Screening)</option>
                   <option value={30}>30 Minutes (Standard)</option>
-                  <option value={45}>45 Minutes (Full Deep Dive)</option>
+                  <option value={45}>45 Minutes (Deep Dive)</option>
                   <option value={60}>60 Minutes (Staff / Principal)</option>
                 </select>
               </div>
@@ -417,7 +416,7 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
                   className="input-field select-field"
                 >
                   <option value="English">English</option>
-                  <option value="Hinglish">Hinglish (Natural Indian Tech)</option>
+                  <option value="Hinglish">Hinglish (Conversational Technical)</option>
                   <option value="Hindi">Hindi (हिंदी)</option>
                 </select>
               </div>
@@ -425,7 +424,7 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
           </div>
 
           <div className="form-group">
-            <label className="section-label">5. Evaluation Focus Topics ({selectedTopics.length})</label>
+            <label className="section-label">Evaluation Focus Domains ({selectedTopics.length} selected)</label>
             <div className="topics-cloud">
               {AVAILABLE_TOPICS.map((topic) => (
                 <button
@@ -442,11 +441,11 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
           </div>
 
           <div className="form-group">
-            <label className="section-label">6. Custom Job Description (Optional)</label>
+            <label className="section-label">Target Job Description (Optional)</label>
             <textarea
               value={jobDescription}
               onChange={(e) => setJobDescription(e.target.value)}
-              placeholder="Paste raw Job Description (JD) text, key requirements, or company tech stack here to ground the interviewer..."
+              placeholder="Paste job description, key architectural requirements, or company tech stack here..."
               className="input-field textarea-field"
               rows={4}
             />
@@ -457,7 +456,7 @@ export const InterviewSetup: React.FC<InterviewSetupProps> = ({ apiUrl, onStartS
             onClick={handleCreateAndLaunch}
             disabled={isSubmitting}
           >
-            <span>{isSubmitting ? 'Configuring Session...' : '🚀 Launch Technical Interview'}</span>
+            <span>{isSubmitting ? 'Configuring Session...' : 'Begin Technical Assessment'}</span>
             <span>→</span>
           </button>
         </div>

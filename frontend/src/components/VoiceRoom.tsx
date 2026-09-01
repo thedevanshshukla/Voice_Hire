@@ -2,21 +2,15 @@ import React, { useState, useEffect, useRef } from 'react';
 import type { InterviewSession } from './InterviewSetup';
 
 interface VoiceMetrics {
-  stt_latency_ms?: number;
+  ttft_ms?: number;
+  ttfa_ms?: number;
   llm_ttft_ms?: number;
-  llm_total_ms?: number;
   tts_ttfa_ms?: number;
-  tts_total_ms?: number;
-  speech_duration_ms?: number;
-  pause_count?: number;
-  endpointing_delay_ms?: number;
-  interrupted?: boolean;
-  interruption_count?: number;
-  interruption_detection_ms?: number;
-  cancellation_latency_ms?: number;
-  interrupted_at_word?: string;
+  stt_latency_ms?: number;
   total_perceived_ms?: number;
-  total_turn_ms?: number;
+  pause_count?: number;
+  interrupted?: boolean;
+  cancellation_latency_ms?: number;
   total_latency_ms?: number;
 }
 
@@ -62,20 +56,18 @@ interface RedFlagItem {
 }
 
 interface EvidenceEvaluationReport {
-  session_id: string;
-  candidate_name: string;
+  overall_confidence: string;
   confidence_score: number;
   recommendation: string;
   recommendation_reasoning: string;
   key_strengths_with_evidence: EvidenceSnippet[];
   key_weaknesses_with_evidence: EvidenceSnippet[];
   red_flags: RedFlagItem[];
-  generated_at: string;
 }
 
 interface TranscriptMessage {
   id: string;
-  role: 'candidate' | 'interviewer';
+  role: 'candidate' | 'interviewer' | 'system';
   text: string;
   stage?: string;
   adaptiveStrategy?: string;
@@ -94,12 +86,12 @@ interface VoiceRoomProps {
 }
 
 const STAGES = [
-  { id: 'greeting', label: '1. Intro', icon: '👋' },
-  { id: 'resume_deep_dive', label: '2. Past Projects', icon: '📂' },
-  { id: 'core_concepts', label: '3. Core Concepts', icon: '🧠' },
-  { id: 'system_design', label: '4. System Design', icon: '🏛️' },
-  { id: 'candidate_questions', label: '5. Q&A', icon: '❓' },
-  { id: 'wrap_up', label: '6. Wrap-Up', icon: '🏁' }
+  { id: 'greeting', label: '1. Introduction', icon: '1' },
+  { id: 'resume_deep_dive', label: '2. Project Deep Dive', icon: '2' },
+  { id: 'core_concepts', label: '3. Technical Concepts', icon: '3' },
+  { id: 'system_design', label: '4. System Architecture', icon: '4' },
+  { id: 'candidate_questions', label: '5. Candidate Q&A', icon: '5' },
+  { id: 'wrap_up', label: '6. Conclusion', icon: '6' }
 ];
 
 export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onClose }) => {
@@ -134,8 +126,6 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
   const [showScorecardModal, setShowScorecardModal] = useState<boolean>(false);
 
   const [inputText, setInputText] = useState('');
-  const [sessionToken, setSessionToken] = useState<string | null>(null);
-  const [livekitUrl, setLivekitUrl] = useState<string>('');
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
   const [agentStatus, setAgentStatus] = useState<'idle' | 'listening' | 'thinking' | 'speaking'>('idle');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -155,30 +145,18 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, agentStatus]);
+  }, [messages]);
 
-  // Fetch updated session scorecard & evidence report
-  const refreshScorecardAndEvidence = async () => {
-    if (!activeSession) return;
-    try {
-      const [scRes, evRes] = await Promise.all([
-        fetch(`${apiUrl}/api/interview/session/${activeSession.session_id}/scorecard`),
-        fetch(`${apiUrl}/api/interview/session/${activeSession.session_id}/evidence-report`)
-      ]);
-      if (scRes.ok) {
-        const sc = await scRes.json();
-        setSessionScorecard(sc);
+  // Clean up resources on unmount
+  useEffect(() => {
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
       }
-      if (evRes.ok) {
-        const ev = await evRes.json();
-        setEvidenceReport(ev);
-      }
-    } catch (err) {
-      console.warn('Could not refresh scorecard/evidence:', err);
-    }
-  };
+      cancelActiveAudio();
+    };
+  }, []);
 
-  // Immediately stop active audio playback (Barge-In)
   const cancelActiveAudio = () => {
     if (activeAudioRef.current) {
       activeAudioRef.current.pause();
@@ -187,56 +165,93 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
     }
   };
 
-  // Trigger Barge-In / Interruption
-  const handleInterrupt = () => {
-    cancelActiveAudio();
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ action: 'interrupt', reason: 'manual_barge_in' }));
+  const playAudio = (audioBase64: string) => {
+    try {
+      cancelActiveAudio();
+      const audio = new Audio(`data:audio/mp3;base64,${audioBase64}`);
+      activeAudioRef.current = audio;
+      audio.onended = () => {
+        setAgentStatus('listening');
+        setVadState('idle');
+      };
+      audio.play().catch((e) => console.warn('Audio autoplay blocked or failed:', e));
+    } catch (e) {
+      console.error('Audio play error:', e);
     }
-    setAgentStatus('listening');
-    setLastInterruption(`🛑 Agent interrupted by candidate`);
-    setTimeout(() => setLastInterruption(null), 3000);
   };
 
-  // Connect to LiveKit session via Token API & setup WebSocket for streaming
+  const handleInterrupt = () => {
+    cancelActiveAudio();
+    setAgentStatus('listening');
+    setLastInterruption('Agent Barge-in Cutoff (<150ms)');
+    setTimeout(() => setLastInterruption(null), 3000);
+
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ action: 'interrupt', reason: 'barge_in' }));
+    }
+  };
+
+  const refreshScorecardAndEvidence = async () => {
+    const sessId = activeSession ? activeSession.session_id : roomName;
+    try {
+      const [scoreRes, evRes] = await Promise.all([
+        fetch(`${apiUrl}/api/interview/session/${sessId}/scorecard`),
+        fetch(`${apiUrl}/api/interview/session/${sessId}/evidence-report`)
+      ]);
+      if (scoreRes.ok) {
+        const sc = await scoreRes.json();
+        setSessionScorecard(sc);
+      }
+      if (evRes.ok) {
+        const ev = await evRes.json();
+        setEvidenceReport(ev);
+      }
+    } catch (e) {
+      console.warn('Could not fetch updated scorecard/evidence:', e);
+    }
+  };
+
   const handleConnect = async () => {
     setErrorMsg(null);
     try {
-      const res = await fetch(`${apiUrl}/api/voice/token`, {
+      const sessId = activeSession ? activeSession.session_id : roomName;
+      const response = await fetch(`${apiUrl}/api/voice/token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          room_name: activeSession ? activeSession.session_id : roomName,
-          identity: `candidate-${Date.now()}`,
+          room_name: sessId,
+          identity: `candidate-${Date.now().toString().slice(-4)}`,
           name: candidateName,
-          session_id: activeSession?.session_id
+          session_id: sessId
         })
       });
 
-      if (!res.ok) {
-        throw new Error(`Token endpoint returned ${res.status}`);
+      if (!response.ok) {
+        throw new Error(`Token generation failed: ${response.statusText}`);
       }
 
-      const data = await res.json();
-      setSessionToken(data.token);
-      setLivekitUrl(data.url);
+      await response.json();
       setIsConnected(true);
       setAgentStatus('listening');
-      setVadState('idle');
 
-      // Initial greeting message tailored to role
-      const roleName = activeSession?.config?.role || 'Software Engineer';
+      // Initial welcoming greeting message
       const initialGreeting: TranscriptMessage = {
-        id: 'msg-0',
+        id: `agent-${Date.now()}`,
         role: 'interviewer',
         stage: 'greeting',
-        text: `Hello ${candidateName}! Welcome to your technical interview for the ${roleName} position. Could you introduce yourself and tell me about a complex project you recently architected?`,
+        text: `Hello ${candidateName}, welcome to your technical interview. I'll be guiding you through today's session. To get started, could you briefly introduce yourself and share an overview of your recent engineering projects?`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
       };
       setMessages([initialGreeting]);
+
+      // Trigger initial audio greeting turn if session is active
+      if (activeSession) {
+        handleSendStreamingTurn("Hello, I am ready to begin the interview.", "init-greeting");
+      }
     } catch (err: any) {
       console.error('Connection error:', err);
-      setErrorMsg(err.message || 'Failed to connect to voice session');
+      setErrorMsg(err.message || 'Failed to connect to LiveKit voice room');
+      setIsConnected(false);
     }
   };
 
@@ -247,23 +262,8 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
       wsRef.current = null;
     }
     setIsConnected(false);
-    setSessionToken(null);
     setAgentStatus('idle');
     setVadState('idle');
-    setActiveMetrics(null);
-    if (onClose) onClose();
-  };
-
-  // Play audio from base64 string
-  const playAudio = (base64Audio: string) => {
-    try {
-      cancelActiveAudio();
-      const snd = new Audio(`data:audio/wav;base64,${base64Audio}`);
-      activeAudioRef.current = snd;
-      snd.play().catch((e) => console.warn('Audio play prevented:', e));
-    } catch (err) {
-      console.error('Error playing audio:', err);
-    }
   };
 
   const handleRunSandboxCode = async () => {
@@ -273,9 +273,9 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          tool_name: 'execute_code_snippet',
+          tool_name: 'execute_python_sandbox',
           arguments: { code: sandboxCode },
-          session_id: activeSession?.session_id
+          session_id: activeSession ? activeSession.session_id : roomName
         })
       });
       if (res.ok) {
@@ -304,7 +304,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
     }
   };
 
-  // Process streaming turn over WebSocket with Answer & Evidence Evaluation
+  // Process streaming turn over WebSocket
   const handleSendStreamingTurn = async (textToSend: string, userMsgId: string) => {
     cancelActiveAudio();
     const wsUrl = apiUrl.replace(/^http/, 'ws') + '/api/voice/stream/ws';
@@ -318,28 +318,30 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
       setAgentStatus('thinking');
       setVadState('endpoint');
       const historyPayload = messages.map((m) => ({
-        role: m.role === 'candidate' ? 'user' : 'assistant',
+        role: m.role === 'interviewer' ? 'assistant' : 'user',
         content: m.text
       }));
 
+      ws.send(JSON.stringify({
+        action: 'turn',
+        text: textToSend,
+        session_id: activeSession ? activeSession.session_id : roomName,
+        history: historyPayload
+      }));
+
+      // Push initial placeholder streaming bubble
       setMessages((prev) => [
         ...prev,
         {
           id: agentMsgId,
           role: 'interviewer',
           stage: currentStage,
-          text: '...',
+          adaptiveStrategy: adaptiveStrategy || undefined,
+          text: '',
           isStreaming: true,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
         }
       ]);
-
-      ws.send(JSON.stringify({
-        action: 'turn',
-        text: textToSend,
-        session_id: activeSession?.session_id,
-        history: historyPayload
-      }));
     };
 
     ws.onmessage = (event) => {
@@ -349,7 +351,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
         if (payload.event_type === 'stage_transition') {
           setCurrentStage(payload.stage);
           setStageProgressPct(payload.progress_pct);
-          setStageNotification(`🎯 Stage Advanced: ${payload.stage_display_name}`);
+          setStageNotification(`Stage Advanced: ${payload.stage_display_name}`);
           setTimeout(() => setStageNotification(null), 4000);
         } else if (payload.event_type === 'adaptive_action') {
           setAdaptiveStrategy(payload.strategy_display);
@@ -366,11 +368,11 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
           );
           refreshScorecardAndEvidence();
         } else if (payload.event_type === 'contradiction_detected') {
-          setLastContradiction(`⚠️ Contradiction: ${payload.contradiction.explanation}`);
+          setLastContradiction(`Contradiction: ${payload.contradiction.explanation}`);
           setTimeout(() => setLastContradiction(null), 5000);
         } else if (payload.event_type === 'language_switched') {
           setDetectedLanguage(payload.current_language);
-          setStageNotification(`🌐 Language Switched: ${payload.current_language}`);
+          setStageNotification(`Language Switched: ${payload.current_language}`);
           setTimeout(() => setStageNotification(null), 4000);
         } else if (payload.event_type === 'tool_executed' && payload.tool_name === 'generate_architecture_diagram') {
           setActiveDiagram(payload.output);
@@ -402,7 +404,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
         } else if (payload.event_type === 'interrupted') {
           cancelActiveAudio();
           setAgentStatus('listening');
-          setLastInterruption('🛑 Agent Barge-in Cutoff (<150ms)');
+          setLastInterruption('Agent Barge-in Cutoff (<150ms)');
           setMessages((prev) =>
             prev.map((msg) =>
               msg.id === agentMsgId
@@ -410,44 +412,40 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                 : msg
             )
           );
-          setTimeout(() => setLastInterruption(null), 3000);
-        } else if (payload.event_type === 'metrics') {
+        }
+
+        if (payload.metrics) {
           setActiveMetrics(payload.metrics);
           setMessages((prev) =>
             prev.map((msg) =>
-              msg.id === agentMsgId
-                ? { ...msg, text: payload.text || fullAgentText, metrics: payload.metrics, isStreaming: false }
-                : msg
+              msg.id === agentMsgId ? { ...msg, metrics: payload.metrics } : msg
             )
           );
-        } else if (payload.event_type === 'done') {
-          ws.close();
-          setIsProcessing(false);
-          setVadState('idle');
-          setTimeout(() => setAgentStatus('listening'), 1500);
         }
       } catch (err) {
-        console.error('WS message parse error:', err);
+        console.error('WebSocket parse error:', err);
       }
+    };
+
+    ws.onclose = () => {
+      setMessages((prev) =>
+        prev.map((msg) => (msg.id === agentMsgId ? { ...msg, isStreaming: false } : msg))
+      );
     };
 
     ws.onerror = (err) => {
       console.error('WebSocket error:', err);
-      setErrorMsg('Streaming connection error');
-      setIsProcessing(false);
       setAgentStatus('listening');
       setVadState('idle');
     };
   };
 
-  // Submit voice / text turn to backend
-  const handleSendTurn = async (customText?: string) => {
-    cancelActiveAudio();
-    const textToSend = customText || inputText;
-    if (!textToSend.trim() || isProcessing) return;
+  const handleSendTurn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inputText.trim() || isProcessing) return;
 
-    setErrorMsg(null);
-    setIsProcessing(true);
+    const currentText = inputText.trim();
+    setInputText('');
     setVadState('speaking');
 
     const userMsgId = `user-${Date.now()}`;
@@ -455,51 +453,53 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
       id: userMsgId,
       role: 'candidate',
       stage: currentStage,
-      text: textToSend,
+      text: currentText,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
     };
 
     setMessages((prev) => [...prev, userMsg]);
-    setInputText('');
 
+    // Use streaming WebSocket if enabled
     if (useStreamingMode) {
-      handleSendStreamingTurn(textToSend, userMsgId);
+      handleSendStreamingTurn(currentText, userMsgId);
       return;
     }
 
-    // Standard REST Fallback
+    setIsProcessing(true);
     setAgentStatus('thinking');
+
     try {
       const historyPayload = messages.map((m) => ({
-        role: m.role === 'candidate' ? 'user' : 'assistant',
+        role: m.role === 'interviewer' ? 'assistant' : 'user',
         content: m.text
       }));
 
-      const res = await fetch(`${apiUrl}/api/voice/turn`, {
+      const response = await fetch(`${apiUrl}/api/voice/turn`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          session_id: activeSession?.session_id,
-          text: textToSend,
-          language: 'en',
+          session_id: activeSession ? activeSession.session_id : roomName,
+          text: currentText,
           history: historyPayload
         })
       });
 
-      if (!res.ok) {
-        throw new Error(`Turn endpoint returned ${res.status}`);
+      if (!response.ok) {
+        throw new Error(`Turn endpoint error: ${response.statusText}`);
       }
 
-      const data = await res.json();
+      const data = await response.json();
       setAgentStatus('speaking');
+      setVadState('endpoint');
       setActiveMetrics(data.metrics);
-      if (data.current_stage) {
-        setCurrentStage(data.current_stage);
-        setStageProgressPct(data.progress_pct);
-      }
-      if (data.adaptive_strategy) {
-        setAdaptiveStrategy(data.adaptive_strategy);
-      }
+      if (data.detected_language) setDetectedLanguage(data.detected_language);
+      if (data.current_stage) setCurrentStage(data.current_stage);
+      if (data.progress_pct) setStageProgressPct(data.progress_pct);
+      if (data.adaptive_strategy) setAdaptiveStrategy(data.adaptive_strategy);
+      if (data.rag_snippet) setActiveRagSnippet(data.rag_snippet);
+      if (data.memory_claims_count !== undefined) setMemoryClaimsCount(data.memory_claims_count);
+      if (data.active_diagram) setActiveDiagram(data.active_diagram);
+
       if (data.turn_evaluation) {
         setLatestTurnScore(data.turn_evaluation.overall_score);
         setMessages((prev) =>
@@ -567,7 +567,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
               )}
             </div>
             <span className="room-subtitle">
-              {isConnected ? `Candidate: ${candidateName} • ${agentStatus.toUpperCase()}` : 'LiveKit WebRTC Evidence-Based Evaluation v0.10.0'}
+              {isConnected ? `Candidate: ${candidateName} • ${agentStatus.toUpperCase()}` : 'Ready to connect'}
             </span>
           </div>
         </div>
@@ -590,7 +590,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                 setShowScorecardModal(true);
               }}
             >
-              <span>📊 Scorecard & Evidence</span>
+              <span>Scorecard & Evidence</span>
               {sessionScorecard && (
                 <span className="scorecard-tag">{sessionScorecard.overall_score.toFixed(1)}</span>
               )}
@@ -604,7 +604,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                   checked={useStreamingMode}
                   onChange={(e) => setUseStreamingMode(e.target.checked)}
                 />
-                <span>⚡ Stream</span>
+                <span>Streaming</span>
               </label>
             </div>
           )}
@@ -656,7 +656,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
 
       {errorMsg && (
         <div className="error-banner">
-          ⚠️ {errorMsg}
+          {errorMsg}
         </div>
       )}
 
@@ -678,15 +678,15 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
         </div>
       )}
 
-      {/* Live Scorecard & Evidence Report Modal */}
+      {/* Cumulative Scorecard & Evidence Modal */}
       {showScorecardModal && (
         <div className="scorecard-modal-backdrop" onClick={() => setShowScorecardModal(false)}>
           <div className="scorecard-modal" onClick={(e) => e.stopPropagation()}>
             <div className="scorecard-modal-header">
               <div>
-                <h3>Evaluation & Evidence Audit</h3>
-                <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                  {activeSession?.config.role} • {candidateName}
+                <h3 style={{ margin: 0 }}>Candidate Assessment Scorecard</h3>
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  {activeSession ? `${activeSession.candidate_name} • ${activeSession.config.role} (${activeSession.config.experience_level})` : candidateName}
                 </span>
               </div>
               <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -701,13 +701,13 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                     className={`tab-btn ${modalTab === 'evidence' ? 'active' : ''}`}
                     onClick={() => setModalTab('evidence')}
                   >
-                    Evidence & Red Flags ({evidenceReport?.red_flags?.length || 0})
+                    Evidence & Findings ({evidenceReport?.red_flags?.length || 0})
                   </button>
                   <button 
                     className={`tab-btn ${modalTab === 'tools' ? 'active' : ''}`}
                     onClick={() => setModalTab('tools')}
                   >
-                    🛠️ Architecture & Tools
+                    Architecture & Code
                   </button>
                   <button 
                     className={`tab-btn ${modalTab === 'benchmark' ? 'active' : ''}`}
@@ -716,7 +716,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                       if (!benchmarkData) handleRunBenchmark();
                     }}
                   >
-                    🧪 Benchmarks
+                    Calibration Benchmark
                   </button>
                 </div>
                 <button className="btn-close" onClick={() => setShowScorecardModal(false)}>✕</button>
@@ -732,7 +732,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                       <span style={{ fontSize: '14px', color: 'var(--text-muted)' }}>/ 5.0</span>
                     </div>
                     <div className="hero-verdict">
-                      <div className="verdict-label">Verdict</div>
+                      <div className="verdict-label">Assessment Verdict</div>
                       <div className="verdict-title">{sessionScorecard?.summary_verdict || 'In Progress'}</div>
                       <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
                         {sessionScorecard?.total_evaluated_turns || 0} technical answers evaluated
@@ -740,7 +740,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                     </div>
                   </div>
 
-                  {/* 5-Dimensional Radar Progress Bars */}
+                  {/* 5-Dimensional Breakdown */}
                   <div className="dimensions-breakdown">
                     <h4>Dimensional Breakdown</h4>
                     
@@ -798,7 +798,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                   {/* Strengths & Gaps */}
                   <div className="scorecard-notes-grid">
                     <div className="notes-box strengths">
-                      <h5>🌟 Top Strengths</h5>
+                      <h5>Key Strengths</h5>
                       <ul>
                         {sessionScorecard?.top_strengths?.map((s, idx) => (
                           <li key={idx}>{s}</li>
@@ -806,7 +806,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                       </ul>
                     </div>
                     <div className="notes-box gaps">
-                      <h5>⚠️ Areas for Growth</h5>
+                      <h5>Development Areas</h5>
                       <ul>
                         {sessionScorecard?.areas_for_improvement?.map((g, idx) => (
                           <li key={idx}>{g}</li>
@@ -825,7 +825,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                         {evidenceReport?.recommendation || 'EVALUATING'}
                       </span>
                       <span className="confidence-tag">
-                        🎯 {Math.round((evidenceReport?.confidence_score || 0.8) * 100)}% Confidence
+                        {Math.round((evidenceReport?.confidence_score || 0.8) * 100)}% Confidence
                       </span>
                     </div>
                     <p className="recommendation-reasoning">
@@ -837,7 +837,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                   {evidenceReport?.red_flags && evidenceReport.red_flags.length > 0 && (
                     <div className="red-flags-section">
                       <h4 style={{ color: '#f87171', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        🚩 Detected Technical Red Flags ({evidenceReport.red_flags.length})
+                        Critical Technical Flags ({evidenceReport.red_flags.length})
                       </h4>
                       <div className="red-flags-grid">
                         {evidenceReport.red_flags.map((rf, idx) => (
@@ -847,7 +847,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                               <span className="flag-category">{rf.category}</span>
                             </div>
                             <div className="flag-quote">"{rf.quote}"</div>
-                            <div className="flag-explanation">⚠️ {rf.explanation}</div>
+                            <div className="flag-explanation">{rf.explanation}</div>
                           </div>
                         ))}
                       </div>
@@ -856,7 +856,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
 
                   {/* Transcript Quotation Citations */}
                   <div className="evidence-quotes-section">
-                    <h4>💬 Verbatim Transcript Citations</h4>
+                    <h4>Verbatim Transcript Citations</h4>
                     
                     <div className="evidence-quotes-grid">
                       {evidenceReport?.key_strengths_with_evidence?.map((snip, idx) => (
@@ -889,7 +889,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                   {/* System Architecture Diagram Card */}
                   <div className="tool-card">
                     <div className="tool-card-header">
-                      <h4>🏛️ Candidate System Architecture Diagram</h4>
+                      <h4>Candidate Architecture Topology</h4>
                       <span className="tool-badge">Mermaid Flowchart</span>
                     </div>
                     {activeDiagram ? (
@@ -898,9 +898,6 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                         <div className="diagram-nodes-grid">
                           {activeDiagram.nodes?.map((node: any) => (
                             <div key={node.id} className={`arch-node-badge ${node.type}`}>
-                              <span className="arch-node-icon">
-                                {node.type === 'database' ? '💾' : node.type === 'cache' ? '⚡' : node.type === 'queue' ? '📬' : node.type === 'client' ? '💻' : node.type === 'proxy' ? '🛡️' : '⚙️'}
-                              </span>
                               <span className="arch-node-label">{node.label}</span>
                             </div>
                           ))}
@@ -917,9 +914,9 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                   {/* Python Code Sandbox Runner */}
                   <div className="tool-card">
                     <div className="tool-card-header">
-                      <h4>🐍 Candidate Python Code Sandbox</h4>
+                      <h4>Python Code Sandbox</h4>
                       <button className="btn btn-secondary btn-sm" onClick={handleRunSandboxCode} disabled={isExecutingCode}>
-                        {isExecutingCode ? 'Running...' : '▶ Run Sandbox Code'}
+                        {isExecutingCode ? 'Running...' : 'Run Code'}
                       </button>
                     </div>
                     <textarea
@@ -935,7 +932,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                           <span>{sandboxOutput.execution_time_ms}ms</span>
                         </div>
                         {sandboxOutput.stdout && <pre className="stdout-text">{sandboxOutput.stdout}</pre>}
-                        {sandboxOutput.stderr && <pre className="stderr-text">⚠️ {sandboxOutput.stderr}</pre>}
+                        {sandboxOutput.stderr && <pre className="stderr-text">{sandboxOutput.stderr}</pre>}
                       </div>
                     )}
                   </div>
@@ -945,13 +942,13 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                 <div className="benchmark-tab-content">
                   <div className="benchmark-hero">
                     <div>
-                      <h4>🧪 AI Evaluator Calibration Benchmark</h4>
+                      <h4>AI Evaluator Calibration Benchmark</h4>
                       <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
                         Evaluates scoring calibration (MAE) and red flag detection accuracy against human-graded golden samples.
                       </p>
                     </div>
                     <button className="btn btn-primary btn-sm" onClick={handleRunBenchmark} disabled={isRunningBenchmark}>
-                      {isRunningBenchmark ? 'Running Suite...' : '⚡ Run Evaluation Benchmark'}
+                      {isRunningBenchmark ? 'Running Suite...' : 'Run Benchmark'}
                     </button>
                   </div>
 
@@ -993,10 +990,10 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                           {benchmarkData.sample_results.map((res: any) => (
                             <tr key={res.sample_id}>
                               <td><code>{res.sample_id}</code></td>
-                              <td>⭐ {res.expected_score.toFixed(1)}</td>
-                              <td>⭐ {res.predicted_score.toFixed(1)}</td>
+                              <td>{res.expected_score.toFixed(1)}</td>
+                              <td>{res.predicted_score.toFixed(1)}</td>
                               <td><span className={`error-tag ${res.absolute_error < 0.5 ? 'good' : 'warn'}`}>±{res.absolute_error.toFixed(2)}</span></td>
-                              <td>{res.detected_red_flag ? `🚩 ${res.detected_red_flag}` : '✓ Clean'}</td>
+                              <td>{res.detected_red_flag ? res.detected_red_flag : 'Clean'}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -1013,7 +1010,6 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
       {/* Main Room Body */}
       {!isConnected ? (
         <div className="connection-setup-card">
-          <div className="setup-icon">🎙️</div>
           <h2>Launch Interview Session</h2>
           <p className="setup-description">
             Connecting to LiveKit WebRTC channel with Evidence-Based Evaluation and red flag detection.
@@ -1053,10 +1049,10 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
             <div className="status-row">
               {/* VAD State Pill */}
               <div className={`vad-state-pill ${vadState}`}>
-                {vadState === 'speaking' && '🟢 Candidate Speaking'}
-                {vadState === 'paused' && '🟡 Thinking Pause'}
-                {vadState === 'endpoint' && '🟣 Turn Endpoint'}
-                {vadState === 'idle' && '⚪ Ready / Listening'}
+                {vadState === 'speaking' && 'Speaking'}
+                {vadState === 'paused' && 'Pausing'}
+                {vadState === 'endpoint' && 'Turn Endpoint'}
+                {vadState === 'idle' && 'Listening'}
               </div>
 
               {/* Adaptive Strategy Pill */}
@@ -1069,49 +1065,49 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
               {/* Turn Score Pill */}
               {latestTurnScore !== null && (
                 <div className="turn-score-pill">
-                  ⭐ Score: {latestTurnScore.toFixed(1)}/5.0
+                  Score: {latestTurnScore.toFixed(1)} / 5.0
                 </div>
               )}
 
               {/* RAG Context Pill */}
               {activeRagSnippet && (
                 <div className="rag-context-hud-pill" title={activeRagSnippet}>
-                  📚 RAG: {activeRagSnippet.split(':')[0]}
+                  Grounding: {activeRagSnippet.split(':')[0]}
                 </div>
               )}
 
               {/* Working Memory Claims Pill */}
               {memoryClaimsCount > 0 && (
                 <div className="memory-claims-hud-pill">
-                  🧠 {memoryClaimsCount} Claim{memoryClaimsCount > 1 ? 's' : ''}
+                  Claims: {memoryClaimsCount}
                 </div>
               )}
 
               {/* Language Pill */}
               {detectedLanguage && (
                 <div className="language-hud-pill">
-                  🌐 {detectedLanguage}
+                  {detectedLanguage}
                 </div>
               )}
 
               {/* A/B Experiment Variant Pill */}
               {assignedVariants && (
                 <div className="experiment-hud-pill" title={JSON.stringify(assignedVariants)}>
-                  🧪 A/B: {assignedVariants.exp_llm_model ? assignedVariants.exp_llm_model.replace('control_', '').replace('treatment_', '') : 'Active'}
+                  Variant: {assignedVariants.exp_llm_model ? assignedVariants.exp_llm_model.replace('control_', '').replace('treatment_', '') : 'Active'}
                 </div>
               )}
 
               {/* Red Flag Badge if detected */}
               {evidenceReport?.red_flags && evidenceReport.red_flags.length > 0 && (
                 <div className="red-flag-hud-pill">
-                  🚩 {evidenceReport.red_flags.length} Flag{evidenceReport.red_flags.length > 1 ? 's' : ''}
+                  Flags: {evidenceReport.red_flags.length}
                 </div>
               )}
 
               {/* Barge-In Action Button */}
               {agentStatus === 'speaking' && (
                 <button className="btn-barge-in" onClick={handleInterrupt}>
-                  🛑 Interrupt Agent
+                  Interrupt Agent
                 </button>
               )}
             </div>
@@ -1126,9 +1122,9 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
               <div className="bar bar-7"></div>
             </div>
             <div className="agent-state-label">
-              {agentStatus === 'listening' && '👂 Listening to candidate...'}
-              {agentStatus === 'thinking' && '⚡ Extracting evidence quotes & verifying technical claims...'}
-              {agentStatus === 'speaking' && '🗣️ Agent speaking (Candidate can interrupt anytime)...'}
+              {agentStatus === 'listening' && 'Listening to candidate response...'}
+              {agentStatus === 'thinking' && 'Analyzing technical arguments and verifying claims...'}
+              {agentStatus === 'speaking' && 'Interviewer speaking (Barge-in active)...'}
               {agentStatus === 'idle' && 'Ready'}
             </div>
 
@@ -1192,120 +1188,98 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession, onC
                 />
               </label>
             </div>
-
-            {sessionToken && (
-              <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
-                LiveKit Host: {livekitUrl} • Session ID: {activeSession?.session_id || roomName} • Stage: {currentStage.toUpperCase()}
-              </div>
-            )}
           </div>
 
-          {/* Transcript Feed */}
-          <div className="transcript-feed">
-            {messages.map((msg) => (
-              <div key={msg.id} className={`transcript-bubble ${msg.role}`}>
-                <div className="bubble-header">
-                  <span className="bubble-author">
-                    {msg.role === 'candidate' ? `🧑 ${candidateName}` : '🤖 AI Interviewer'}
-                  </span>
-                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+          {/* Transcript & Message Stream */}
+          <div className="chat-stream-card">
+            <div className="chat-messages-scroll">
+              {messages.map((msg) => (
+                <div key={msg.id} className={`chat-bubble-wrapper ${msg.role}`}>
+                  <div className={`chat-bubble ${msg.role} ${msg.isStreaming ? 'streaming' : ''} ${msg.wasInterrupted ? 'interrupted' : ''}`}>
+                    <div className="bubble-header">
+                      <span className="bubble-sender">
+                        {msg.role === 'interviewer' ? 'Interviewer' : candidateName}
+                      </span>
+                      {msg.stage && (
+                        <span className="bubble-stage-badge">
+                          {msg.stage.replace('_', ' ').toUpperCase()}
+                        </span>
+                      )}
+                      {msg.adaptiveStrategy && (
+                        <span className="bubble-strategy-badge">
+                          {msg.adaptiveStrategy}
+                        </span>
+                      )}
+                      <span className="bubble-time">{msg.timestamp}</span>
+                    </div>
+
+                    <div className="bubble-content">
+                      {msg.text || (msg.isStreaming ? <span className="typing-dots"><span>.</span><span>.</span><span>.</span></span> : '')}
+                    </div>
+
+                    {/* Verbatim Quote Feedback Badge */}
                     {msg.evaluation && (
-                      <span className="bubble-score-tag">
-                        ⭐ {msg.evaluation.overall_score.toFixed(1)}
-                      </span>
+                      <div className="turn-evaluation-box">
+                        <div className="eval-header">
+                          <span className="eval-score">
+                            Score: {msg.evaluation.overall_score.toFixed(1)}/5.0
+                          </span>
+                          <span className="eval-depth">
+                            Correctness: {msg.evaluation.correctness.toFixed(1)} • Depth: {msg.evaluation.depth_and_mechanics.toFixed(1)}
+                          </span>
+                        </div>
+                        {msg.evaluation.feedback && (
+                          <div className="eval-feedback">{msg.evaluation.feedback}</div>
+                        )}
+                      </div>
                     )}
-                    {msg.adaptiveStrategy && (
-                      <span className="bubble-strategy-tag">{msg.adaptiveStrategy}</span>
+
+                    {msg.metrics && msg.role === 'interviewer' && (
+                      <div className="bubble-metrics">
+                        <span>TTFT: {msg.metrics.llm_ttft_ms ?? 0}ms</span>
+                        <span>TTFA: {msg.metrics.tts_ttfa_ms ?? 0}ms</span>
+                        <span>Total: {msg.metrics.total_latency_ms ?? 0}ms</span>
+                      </div>
                     )}
-                    {msg.stage && <span className="bubble-stage-tag">{msg.stage}</span>}
-                    <span className="bubble-time">{msg.timestamp}</span>
                   </div>
                 </div>
-                <div className="bubble-content">
-                  {msg.text}
-                  {msg.isStreaming && <span className="typing-cursor">▌</span>}
-                  {msg.wasInterrupted && <span className="interrupted-tag"> [Interrupted]</span>}
-                </div>
-                {msg.metrics && (
-                  <div className="latency-badge-row">
-                    {msg.metrics.llm_ttft_ms !== undefined && (
-                      <span className="latency-badge">TTFT: {msg.metrics.llm_ttft_ms}ms</span>
-                    )}
-                    {msg.metrics.tts_ttfa_ms !== undefined && (
-                      <span className="latency-badge">TTFA: {msg.metrics.tts_ttfa_ms}ms</span>
-                    )}
-                    {msg.metrics.interrupted && (
-                      <span className="latency-badge" style={{ color: '#f87171', borderColor: 'rgba(239, 68, 68, 0.4)' }}>
-                        🛑 Cutoff: {msg.metrics.cancellation_latency_ms}ms
-                      </span>
-                    )}
-                    <span className="latency-badge total">
-                      Total: {msg.metrics.total_perceived_ms ?? msg.metrics.total_turn_ms ?? msg.metrics.total_latency_ms}ms
-                    </span>
-                  </div>
-                )}
-              </div>
-            ))}
-            <div ref={transcriptEndRef} />
-          </div>
+              ))}
+              <div ref={transcriptEndRef} />
+            </div>
 
-          {/* Interaction & Mic Control Bar */}
-          <div className="voice-controls-bar">
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <button
-                className={`mic-toggle-btn ${isMuted ? 'muted' : 'active'}`}
-                onClick={() => setIsMuted(!isMuted)}
-                title={isMuted ? 'Unmute microphone' : 'Mute microphone'}
-              >
-                {isMuted ? '🔇 Muted' : '🎙️ Mic Active'}
-              </button>
-
-              {agentStatus === 'speaking' && (
-                <button className="btn-barge-in-sm" onClick={handleInterrupt}>
-                  🛑 Barge-in
+            {/* Candidate Controls & Text Fallback Input */}
+            <div className="chat-input-bar">
+              <form onSubmit={handleSendTurn} className="input-form">
+                <input
+                  type="text"
+                  value={inputText}
+                  onChange={(e) => setInputText(e.target.value)}
+                  placeholder={
+                    agentStatus === 'speaking' 
+                      ? 'Type to interrupt or speak over mic...' 
+                      : 'Type candidate answer or speak naturally...'
+                  }
+                  className="input-field"
+                  disabled={isProcessing}
+                />
+                <button
+                  type="button"
+                  className={`btn btn-mic ${isMuted ? 'muted' : 'active'}`}
+                  onClick={() => setIsMuted(!isMuted)}
+                  title={isMuted ? 'Unmute microphone' : 'Mute microphone'}
+                >
+                  {isMuted ? 'Muted' : 'Mic On'}
                 </button>
-              )}
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={isProcessing || !inputText.trim()}
+                >
+                  <span>Send</span>
+                  <span>→</span>
+                </button>
+              </form>
             </div>
-
-            <div className="quick-replies">
-              <button
-                className="chip-btn"
-                onClick={() => {
-                  handleInterrupt();
-                  handleSendTurn('In our high-throughput cluster, we debugged a production deadlock caused by row locks, so we migrated to optimistic versioning with retry backoffs. We accepted occasional rollback latency as a trade-off for eliminating lock contention.');
-                }}
-                disabled={isProcessing}
-              >
-                "Strong: Optimistic locking with prod trade-offs"
-              </button>
-              <button
-                className="chip-btn"
-                onClick={() => handleSendTurn('We had zero latency and 100% ACID consistency across microservices because network never fails.')}
-                disabled={isProcessing}
-              >
-                "Red Flag: Zero latency & reliable network"
-              </button>
-            </div>
-
-            <form
-              className="voice-input-form"
-              onSubmit={(e) => {
-                e.preventDefault();
-                handleSendTurn();
-              }}
-            >
-              <input
-                type="text"
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                placeholder="Speak, interrupt, or type technical response..."
-                className="input-field voice-input"
-                disabled={isProcessing}
-              />
-              <button type="submit" className="btn btn-primary btn-send" disabled={isProcessing || !inputText.trim()}>
-                {isProcessing ? '⚡ Streaming...' : 'Send Turn'}
-              </button>
-            </form>
           </div>
         </div>
       )}
