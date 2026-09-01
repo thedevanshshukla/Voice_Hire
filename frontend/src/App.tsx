@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BrowserRouter, Routes, Route, useNavigate, Link } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useNavigate, Link, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AuthView } from './components/AuthView';
 import { DashboardView } from './components/DashboardView';
@@ -19,6 +19,21 @@ interface HealthStatus {
     vad?: string;
   };
 }
+
+// Protected Route Guard requiring active authentication
+const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { isAuthenticated, loading } = useAuth();
+  
+  if (loading) {
+    return <div className="loading-state">Checking session authorization...</div>;
+  }
+  
+  if (!isAuthenticated) {
+    return <Navigate to="/auth" replace />;
+  }
+  
+  return <>{children}</>;
+};
 
 const NavigationBar: React.FC<{ backendHealth: HealthStatus | null; loading: boolean; error: boolean }> = ({
   backendHealth: _backendHealth,
@@ -64,8 +79,8 @@ const NavigationBar: React.FC<{ backendHealth: HealthStatus | null; loading: boo
             <Link to="/auth" className="btn btn-secondary btn-sm">
               Sign In
             </Link>
-            <Link to="/setup" className="btn btn-primary btn-sm">
-              Start Assessment
+            <Link to="/auth" className="btn btn-primary btn-sm">
+              Create Account
             </Link>
           </div>
         )}
@@ -91,14 +106,29 @@ const HomePage: React.FC<{ backendHealth: HealthStatus | null }> = ({ backendHea
         </p>
 
         <div className="btn-container">
-          <button className="btn btn-primary" onClick={() => navigate(isAuthenticated ? '/setup' : '/auth')}>
-            <span>Configure & Launch Session</span>
-            <span>→</span>
-          </button>
-          <button className="btn btn-secondary" onClick={() => navigate('/dashboard')}>
-            <span>Candidate Dashboard</span>
-            <span>→</span>
-          </button>
+          {isAuthenticated ? (
+            <>
+              <button className="btn btn-primary" onClick={() => navigate('/setup')}>
+                <span>Configure & Launch Assessment</span>
+                <span>→</span>
+              </button>
+              <button className="btn btn-secondary" onClick={() => navigate('/dashboard')}>
+                <span>Assessment Dashboard</span>
+                <span>→</span>
+              </button>
+            </>
+          ) : (
+            <>
+              <button className="btn btn-primary" onClick={() => navigate('/auth')}>
+                <span>Sign In to Begin Assessment</span>
+                <span>→</span>
+              </button>
+              <button className="btn btn-secondary" onClick={() => navigate('/auth')}>
+                <span>Create an Account</span>
+                <span>→</span>
+              </button>
+            </>
+          )}
         </div>
 
         {/* Providers & Capabilities Banner */}
@@ -184,10 +214,38 @@ function App() {
             <Routes>
               <Route path="/" element={<HomePage backendHealth={backendHealth} />} />
               <Route path="/auth" element={<AuthView apiUrl={API_URL} />} />
-              <Route path="/dashboard" element={<DashboardView apiUrl={API_URL} />} />
-              <Route path="/setup" element={<InterviewSetup apiUrl={API_URL} />} />
-              <Route path="/interview/:sessionId" element={<VoiceRoom apiUrl={API_URL} />} />
-              <Route path="/report/:sessionId" element={<ReportView apiUrl={API_URL} />} />
+              <Route
+                path="/dashboard"
+                element={
+                  <ProtectedRoute>
+                    <DashboardView apiUrl={API_URL} />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/setup"
+                element={
+                  <ProtectedRoute>
+                    <InterviewSetup apiUrl={API_URL} />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/interview/:sessionId"
+                element={
+                  <ProtectedRoute>
+                    <VoiceRoom apiUrl={API_URL} />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/report/:sessionId"
+                element={
+                  <ProtectedRoute>
+                    <ReportView apiUrl={API_URL} />
+                  </ProtectedRoute>
+                }
+              />
             </Routes>
           </main>
 
