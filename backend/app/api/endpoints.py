@@ -1,5 +1,6 @@
 import base64
 import json
+import re
 import time
 from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, status, Response, Request
@@ -544,8 +545,33 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
         active_lang = InterviewLanguage.ENGLISH
         assigned_variants = None
         
-        # PII Sanitization
-        candidate_text = PIISanitizer.sanitize(req.text or "")
+        # PII Sanitization & Phonetic Glitch Normalization
+        raw_text = PIISanitizer.sanitize(req.text or "")
+        phonetic_replacements = {
+            "and this interview": "end this interview",
+            "and the interview": "end the interview",
+            "synch fuck low": "async workflow",
+            "fuck low": "workflow",
+            "fuck": "workflow",
+            "intect": "intelligent",
+            "Celerio": "Celery",
+            "Larry": "Celery",
+            "mango": "MongoDB",
+            "dewendocker": "Docker",
+            "first API": "FastAPI",
+            "radius": "Redis"
+        }
+        cleaned_text = raw_text
+        for bad, good in phonetic_replacements.items():
+            cleaned_text = re.sub(re.escape(bad), good, cleaned_text, flags=re.IGNORECASE)
+        candidate_text = cleaned_text.strip()
+
+        # Check intent to end interview
+        lower_cand = candidate_text.lower()
+        is_end_intent = any(kw in lower_cand for kw in [
+            "end this interview", "end the interview", "end interview",
+            "finish interview", "stop the interview", "wrap up now", "conclude interview"
+        ])
         
         # Language consistency: Strictly locked to session configuration to prevent mid-interview language flip
         active_lang = InterviewLanguage.ENGLISH
@@ -570,9 +596,14 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
                 ae = active_adaptive_engines[req.session_id]
                 me = active_memory_engines[req.session_id]
                 
-                trans_res = sm.step_turn(last_candidate_reply=candidate_text)
-                current_stage = trans_res.current_stage
-                progress_pct = trans_res.progress_pct
+                if is_end_intent:
+                    current_stage = InterviewStage.WRAP_UP
+                    sm.current_stage = InterviewStage.WRAP_UP
+                    progress_pct = 100.0
+                else:
+                    trans_res = sm.step_turn(last_candidate_reply=candidate_text)
+                    current_stage = trans_res.current_stage
+                    progress_pct = trans_res.progress_pct
 
                 # Process working memory & claims
                 new_contras = me.process_candidate_turn(
@@ -624,11 +655,11 @@ async def process_voice_turn(req: VoiceTurnRequest) -> VoiceTurnResponse:
                 )
 
         if req.text and isinstance(voice_pipeline.stt, type(VoiceProviderFactory.get_stt_provider("mock"))):
-            voice_pipeline.stt.default_response = req.text
+            voice_pipeline.stt.default_response = candidate_text
 
         turn_result: PipelineTurnResult = await voice_pipeline.process_turn(
-            audio_in=audio_bytes if not req.text else None,
-            input_text=req.text,
+            audio_in=audio_bytes,
+            input_text=candidate_text,
             history=history_msgs,
             system_prompt=system_prompt,
             language="hi" if active_lang in [InterviewLanguage.HINDI, InterviewLanguage.HINGLISH] else "en"

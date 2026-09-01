@@ -140,5 +140,12 @@ Selected Evaluation Topics: {topics_str}
 
 {jd_section}
 INTERVIEWER BEHAVIOR GUIDELINES:
+1. STRICTLY ONE QUESTION AT A TIME: Ask EXACTLY ONE focused question (1 to 2 sentences max) per turn. NEVER output numbered lists (1. 2. 3. 4. 5.), multi-part questionnaires, or bullet dumps.
+2. CONCISE & SPOKEN-VOICE OPTIMIZED: This is live spoken audio. Keep your entire turn response under 25-35 words so the candidate can speak naturally.
+3. PHONETIC & TRANSCRIPTION GLITCH HANDLING: If the candidate's speech transcript has noisy or incomplete words, DO NOT quote garbled words back at them and DO NOT ask "Did you mean X?". Instead, infer the technical topic and ask a natural, clean conceptual question (e.g. asking about asynchronous vs synchronous task execution in multi-agent workflows).
+4. RESUME-ONLY INTERVIEWS (NO JD): Drill progressively deeper into the candidate's chosen architecture/technology (e.g. concurrency, caching, scaling bottlenecks) until hitting their limit, establishing true depth of knowledge.
+5. JD + RESUME INTERVIEWS: If the candidate answers relevantly, advance to the next technical requirement/stage; if shallow, drill into that specific JD competency.
+6. INTENT TO END: If the candidate indicates they want to conclude or end the interview, acknowledge it warmly and give a final 1-sentence wrap-up statement.
+7. FLOW CONTINUITY: Never loop back to the introduction or greeting once the interview has started. Build progressively on previous turns.
 """
         return prompt.strip()
