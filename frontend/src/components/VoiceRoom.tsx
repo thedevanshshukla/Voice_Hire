@@ -427,7 +427,7 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
   };
 
   // Speak AI interviewer question aloud with sentence chunking & SpeechSynthesis keep-alive
-  const speakQuestionAloud = (text: string, audioBase64?: string) => {
+  const speakQuestionAloud = (text: string, audioBase64?: string, isFinalWrapUp: boolean = false) => {
     cancelActiveAudio();
     stopListeningForCandidate();
     setAgentStatus('speaking');
@@ -435,8 +435,16 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
     setSilenceCountdown(null);
 
     const onSpeechFinished = () => {
-      // Seamlessly transition to listening mode and trigger fresh speech recognition
-      startListeningForCandidate();
+      if (isFinalWrapUp) {
+        // Automatic wrap-up: wait 1.2s and redirect directly to comprehensive evaluation report
+        setAgentStatus('idle');
+        setTimeout(() => {
+          handleDisconnect();
+        }, 1200);
+      } else {
+        // Seamlessly transition to listening mode and trigger fresh speech recognition
+        startListeningForCandidate();
+      }
     };
 
     // If audioBase64 audio bytes are valid
@@ -609,7 +617,17 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
       };
 
       setMessages((prev) => [...prev, agentMsg]);
-      speakQuestionAloud(data.response_text, data.audio_base64);
+
+      // Check if this response is the concluding wrap-up / farewell statement
+      const lowerReply = (data.response_text || '').toLowerCase();
+      const isWrapUp = data.current_stage === 'wrap_up' || 
+                       lowerReply.includes('future opportunities') ||
+                       lowerReply.includes('best of luck') ||
+                       lowerReply.includes('concludes our interview') ||
+                       lowerReply.includes('thank you for your time') ||
+                       lowerReply.includes('have a great day');
+
+      speakQuestionAloud(data.response_text, data.audio_base64, isWrapUp);
     } catch (err: any) {
       console.error('Turn error:', err);
       setErrorMsg(err.message || 'Error processing speech turn');
@@ -740,36 +758,35 @@ export const VoiceRoom: React.FC<VoiceRoomProps> = ({ apiUrl, activeSession: pro
           </div>
         </div>
 
-        {/* Live Session Timer */}
+        {/* Live Session Timer (Prominent & Centered) */}
         {isConnected && (
           <div className="session-timer-badge">
-            <span className="timer-icon">⏱</span>
-            <span>Elapsed {formatTimer(elapsedSeconds)}</span>
+            <span className="timer-icon">⏱️</span>
+            <span>Elapsed: {formatTimer(elapsedSeconds)}</span>
             <span className="timer-divider">•</span>
-            <span style={{ color: remainingSeconds < 300 ? '#f87171' : 'var(--text-muted)' }}>
-              {formatTimer(remainingSeconds)} Remaining
+            <span style={{ color: remainingSeconds < 300 ? '#f87171' : '#a78bfa' }}>
+              {formatTimer(remainingSeconds)} Left
             </span>
           </div>
         )}
 
         <div className="room-actions">
           {isConnected && (
-            <button 
-              className="btn btn-secondary btn-scorecard-btn"
-              onClick={() => {
-                refreshScorecardAndEvidence();
-                setShowScorecardModal(true);
-              }}
-            >
-              <span>Recruiter Scorecard</span>
-            </button>
+            <>
+              <button 
+                className="btn btn-secondary btn-scorecard-btn"
+                onClick={() => {
+                  refreshScorecardAndEvidence();
+                  setShowScorecardModal(true);
+                }}
+              >
+                <span>Recruiter Scorecard</span>
+              </button>
+              <button className="btn btn-end-interview-top" onClick={handleDisconnect}>
+                <span>⏹️ End Interview & View Report</span>
+              </button>
+            </>
           )}
-
-          {isConnected ? (
-            <button className="btn btn-disconnect" onClick={handleDisconnect}>
-              End Interview & View Report
-            </button>
-          ) : null}
         </div>
       </div>
 
