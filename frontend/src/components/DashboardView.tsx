@@ -101,18 +101,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ apiUrl }) => {
         </div>
         <div className="dash-stat-card">
           <div className="dash-stat-num">
-            {sessions.length > 0
-              ? (
-                  sessions.reduce((acc, s) => acc + (s.scorecard?.overall_score || 0), 0) /
-                  Math.max(1, sessions.filter((s) => (s.scorecard?.overall_score || 0) > 0).length)
-                ).toFixed(1)
-              : '0.0'}
-            <span style={{ fontSize: '14px', color: 'var(--text-muted)' }}> / 5.0</span>
-          </div>
-          <div className="dash-stat-lbl">Average Candidate Score</div>
-        </div>
-        <div className="dash-stat-card">
-          <div className="dash-stat-num">
             {sessions.filter((s) => s.evidence_report?.recommendation === 'STRONG_HIRE' || s.evidence_report?.recommendation === 'HIRE').length}
           </div>
           <div className="dash-stat-lbl">Pass / Hire Recommendations</div>
@@ -168,7 +156,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ apiUrl }) => {
                       </td>
                       <td>
                         <span className="table-score-badge">
-                          {score > 0 ? `${score.toFixed(1)} / 5.0` : 'In Progress'}
+                          {score.toFixed(1)} / 5.0
                         </span>
                       </td>
                       <td>
