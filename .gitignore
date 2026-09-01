@@ -45,3 +45,4 @@ db.sqlite3
 *.njsproj
 *.sln
 *.swp
+agent.md
