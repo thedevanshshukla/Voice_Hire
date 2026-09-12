@@ -62,7 +62,7 @@ Evaluates candidate responses against strict industry engineering rubrics:
                     │  - Pure Voice Interface & Live Waveform │
                     │  - Sticky Timer & End Interview Button  │
                     │  - Independent Scrollable Transcripts   │
-                    │  - Full Evaluation Scorecard & PDF Export│
+                    │  - Evaluation Scorecard & PDF Export    │
                     └────────────────────┬────────────────────┘
                                          │
                          Opus WebM Audio / WebSocket / REST
